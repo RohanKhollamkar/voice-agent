@@ -6,6 +6,7 @@ to runs/transcripts/<call_id>.json after every turn.
 """
 
 import json
+import re
 import time
 import uuid
 from datetime import datetime
@@ -35,6 +36,16 @@ CALL_CONNECTED = "[The customer has answered the call.]"
 FALLBACK_LINE = "I'm sorry, I'm having trouble on my side. Could you say that again?"
 
 MAX_TOOL_ROUNDS = 5  # model -> tools -> model ... per customer turn
+
+
+# Some models write their thinking inline, wrapped in <think> tags. An unclosed
+# tag means the reply was cut off mid-thought, so everything after it goes too.
+THINKING = re.compile(r"<think>.*?(</think>|$)", re.DOTALL)
+
+
+def strip_thinking(text: str | None) -> str:
+    """Remove any thinking text so it is never spoken, logged as speech or re-sent."""
+    return THINKING.sub("", text or "").strip()
 
 
 def now() -> datetime:
@@ -83,8 +94,8 @@ class Agent:
             started_at=now(),
         )
         self.client = client or AsyncOpenAI(
-            api_key=config.OPENROUTER_API_KEY,
-            base_url=config.OPENROUTER_BASE_URL,
+            api_key=config.NVIDIA_API_KEY,
+            base_url=config.NVIDIA_BASE_URL,
             max_retries=0,  # our own fallback to the backup model handles failures
         )
         self.messages: list[dict] = [
@@ -122,8 +133,8 @@ class Agent:
             if message is None:  # both models failed
                 break
             models_used.append(model)
-            if message.content and message.content.strip():
-                spoken.append(message.content.strip())
+            if message.content:
+                spoken.append(message.content)
             if not message.tool_calls:
                 self.messages.append({"role": "assistant", "content": message.content})
                 break
@@ -150,9 +161,12 @@ class Agent:
                     messages=self.messages,
                     tools=TOOL_SCHEMAS,
                     timeout=config.LLM_TIMEOUT_SECONDS,
-                    extra_body={"reasoning": config.LLM_REASONING},
+                    extra_body=config.LLM_EXTRA_BODY,
                 )
                 message = response.choices[0].message if response.choices else None
+                if message:
+                    # Thinking sent in its own field is ignored; inline thinking is cut here.
+                    message.content = strip_thinking(message.content)
                 if message and (message.content or message.tool_calls):
                     self._log(
                         type="llm_call",

@@ -1,4 +1,4 @@
-"""Stage 1 voice spike: mic -> Sarvam STT -> OpenRouter LLM -> ElevenLabs TTS -> speaker.
+"""Stage 1 voice spike: mic -> Sarvam STT -> NVIDIA LLM -> ElevenLabs TTS -> speaker.
 
 Proves the stack works end to end and prints where each turn's time went.
 No collections logic here.
@@ -26,7 +26,7 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMUserAggregatorParams,
 )
 from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
-from pipecat.services.openrouter.llm import OpenRouterLLMService
+from pipecat.services.nvidia.llm import NvidiaLLMService
 from pipecat.services.sarvam.stt import SarvamRealtimeSTTService
 from pipecat.transports.local.audio import (
     LocalAudioTransport,
@@ -79,13 +79,13 @@ async def main(model: str) -> None:
         ),
     )
 
-    llm = OpenRouterLLMService(
-        api_key=config.OPENROUTER_API_KEY,
-        base_url=config.OPENROUTER_BASE_URL,
-        settings=OpenRouterLLMService.Settings(
+    llm = NvidiaLLMService(
+        api_key=config.NVIDIA_API_KEY,
+        base_url=config.NVIDIA_BASE_URL,
+        settings=NvidiaLLMService.Settings(
             model=model,
-            # `reasoning` is OpenRouter's own field, so it travels in extra_body.
-            extra={"extra_body": {"reasoning": config.LLM_REASONING}},
+            # Not an OpenAI field, so it travels in extra_body.
+            extra={"extra_body": config.LLM_EXTRA_BODY},
         ),
     )
 
@@ -139,5 +139,5 @@ async def main(model: str) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Voice spike with per-turn latency.")
-    parser.add_argument("--model", default=config.BOT_MODEL, help="OpenRouter model ID")
+    parser.add_argument("--model", default=config.BOT_MODEL, help="NVIDIA API model ID")
     asyncio.run(main(parser.parse_args().model))

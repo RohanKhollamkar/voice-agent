@@ -1,7 +1,8 @@
-"""Stage 1: time to first token for BOT_MODEL and BACKUP_MODEL through OpenRouter.
+"""Stage 1: time to first token for BOT_MODEL, BACKUP_MODEL and JUDGE_MODEL on the NVIDIA API.
 
 Sends the same 10 short prompts to each model, one at a time, and reports
-median and p95 time to first token plus any errors or empty replies.
+median and p95 time to first token plus any errors or empty replies. Then sends
+one prompt with a tool definition to confirm the model returns a proper tool call.
 
 Run from the repo root:
     python -m scripts.llm_latency
@@ -36,20 +37,16 @@ TIMEOUT_SECONDS = 30
 
 
 async def check_model(client: AsyncOpenAI, model: str) -> None:
-    """Say whether the model ID exists on OpenRouter and whether reasoning can be set."""
+    """Say whether the model ID exists in the NVIDIA API's model list."""
     try:
         listed = {m.id: m for m in (await client.models.list()).data}
     except OpenAIError as error:  # the timing run below still tells us if the ID works
         print(f"  could not list models: {error}")
         return
     if model not in listed:
-        print("  MODEL ID NOT FOUND in OpenRouter's model list")
+        print("  MODEL ID NOT FOUND in the NVIDIA API's model list")
         return
-    supported = getattr(listed[model], "supported_parameters", None) or []
-    print(
-        f"  model ID found; accepts the reasoning setting: {'reasoning' in supported}; "
-        f"supports tool calling: {'tools' in supported}"
-    )
+    print("  model ID found in the NVIDIA API's model list")
 
 
 async def time_one(client: AsyncOpenAI, model: str, prompt: str) -> dict:
@@ -64,14 +61,14 @@ async def time_one(client: AsyncOpenAI, model: str, prompt: str) -> dict:
                 {"role": "user", "content": prompt},
             ],
             stream=True,
-            extra_body={"reasoning": config.LLM_REASONING},
+            extra_body=config.LLM_EXTRA_BODY,
         )
         async for chunk in stream:
             if not chunk.choices:
                 continue
             delta = chunk.choices[0].delta
-            # OpenRouter streams thinking in a separate `reasoning` field.
-            if getattr(delta, "reasoning", None):
+            # NVIDIA streams thinking in a separate `reasoning_content` field.
+            if getattr(delta, "reasoning_content", None):
                 result["thought"] = True
             if delta.content:
                 if result["ttft"] is None:
@@ -80,6 +77,41 @@ async def time_one(client: AsyncOpenAI, model: str, prompt: str) -> dict:
     except OpenAIError as error:
         result["error"] = f"{type(error).__name__}: {error}"
     return result
+
+
+TOOL_PROMPT = "Please send the OTP to my phone now."
+TOOL = {
+    "type": "function",
+    "function": {
+        "name": "send_otp",
+        "description": "Send a one-time password to the customer's registered phone.",
+        "parameters": {"type": "object", "properties": {}, "required": []},
+    },
+}
+
+
+async def check_tool_call(client: AsyncOpenAI, model: str) -> None:
+    """Send one prompt with a tool defined and say whether a proper tool call came back."""
+    try:
+        response = await client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": TOOL_PROMPT},
+            ],
+            tools=[TOOL],
+            extra_body=config.LLM_EXTRA_BODY,
+        )
+    except OpenAIError as error:
+        print(f"  tool call: ERROR  {type(error).__name__}: {str(error)[:150]}")
+        return
+    message = response.choices[0].message if response.choices else None
+    calls = (message.tool_calls if message else None) or []
+    if calls and calls[0].function.name == "send_otp":
+        print("  tool call: OK, the model called send_otp")
+    else:
+        said = (message.content or "").strip()[:80] if message else ""
+        print(f"  tool call: NOT MADE, the model replied in text instead: {said!r}")
 
 
 def p95(values: list[float]) -> float:
@@ -118,27 +150,30 @@ async def run_model(client: AsyncOpenAI, model: str, pause: float) -> None:
     print(
         f"  errors: {errors}, empty replies: {empty}, replies that still sent thinking: {thought}"
     )
+    await check_tool_call(client, model)
 
 
 async def main(pause: float) -> None:
     client = AsyncOpenAI(
-        api_key=config.OPENROUTER_API_KEY,
-        base_url=config.OPENROUTER_BASE_URL,
+        api_key=config.NVIDIA_API_KEY,
+        base_url=config.NVIDIA_BASE_URL,
         timeout=TIMEOUT_SECONDS,
         max_retries=0,  # a retry would hide an error and inflate the timing
     )
-    for model in dict.fromkeys([config.BOT_MODEL, config.BACKUP_MODEL]):
+    for model in dict.fromkeys(
+        [config.BOT_MODEL, config.BACKUP_MODEL, config.JUDGE_MODEL]
+    ):
         await run_model(client, model, pause)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="LLM time to first token on OpenRouter."
+        description="LLM time to first token on the NVIDIA API."
     )
     parser.add_argument(
         "--pause",
         type=float,
-        default=3.0,
-        help="seconds between requests, to stay under the free-model limit of 20 a minute",
+        default=1.5,
+        help="seconds between requests, to stay under NVIDIA's free limit of about 40 a minute",
     )
     asyncio.run(main(parser.parse_args().pause))

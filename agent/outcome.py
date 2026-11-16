@@ -212,21 +212,26 @@ async def extract_outcome(
         transfer=list(TRANSFER_REASONS),
         transcript=transcript_text,
     )
-    try:
-        response = await client.chat.completions.create(
-            model=config.JUDGE_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            timeout=config.EXTRACTION_TIMEOUT_SECONDS,
-        )
-        reply = (response.choices or [None])[0]
-        text = (reply.message.content or "") if reply else ""
-        # Models often wrap JSON in a code fence or a sentence; take the outer braces.
-        found = json.loads(text[text.index("{") : text.rindex("}") + 1])
-        outcome_type, details = found.get("outcome_type"), found.get("details")
-    except OpenAIError as error:
-        return None, None, f"extraction request failed: {type(error).__name__}: {error}"
-    except (ValueError, AttributeError):
-        return None, None, "extraction reply was not a JSON object"
+    error = None
+    for _attempt in (1, 2):  # the judge endpoint is sometimes slow or busy: retry once
+        try:
+            response = await client.chat.completions.create(
+                model=config.JUDGE_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                timeout=config.EXTRACTION_TIMEOUT_SECONDS,
+            )
+            reply = (response.choices or [None])[0]
+            text = (reply.message.content or "") if reply else ""
+            # Models often wrap JSON in a code fence or a sentence; take the outer braces.
+            found = json.loads(text[text.index("{") : text.rindex("}") + 1])
+            outcome_type, details = found.get("outcome_type"), found.get("details")
+            break
+        except OpenAIError as failure:
+            error = f"extraction request failed: {type(failure).__name__}: {failure}"
+        except (ValueError, AttributeError):
+            error = "extraction reply was not a JSON object"
+    else:
+        return None, None, error
 
     errors = validate_details(outcome_type, details)
     if errors:

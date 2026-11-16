@@ -8,8 +8,10 @@ Phase 1 (development) plan. Testing strategy (phase 2) and the final writeup (ph
 |---|---|---|
 | Framework | Pipecat | Readable pipeline, runs on a laptop mic and speaker with no media server, and a guardrail can be added as one visible step between the model and speech. LiveKit Agents is stronger for telephony at scale, which is out of scope. OpenAI Realtime merges the three stages the brief asks to see separately |
 | Speech-to-text | Sarvam real-time | Built for Indian languages and code-mixed speech; free credits cover development |
-| Bot model | Gemma 4 31B, thinking off (free on OpenRouter) | 96.6% of turns passed and ~0.49 s median to first answer token in Pipecat's voice-readiness benchmark |
-| Backup and judge model | Nemotron 3 Ultra (free on OpenRouter) | Top score (100%) in the same benchmark but slower on the free endpoint (~1.56 s), so it judges, where speed does not matter |
+| Model provider | NVIDIA API (build.nvidia.com), called directly | Free tier of about 40 requests a minute and 10,000 a day per model (third-party trackers, check your console), so eval runs are not rate-limited. Pipecat has a built-in NVIDIA service. Replaces OpenRouter, whose free tier allows 50 requests a day |
+| Bot model | Nemotron 3 Super 120B, thinking off | 97.0% of turns passed and ~0.69 s median to first answer in Pipecat's voice-readiness benchmark, inside its 0.7 s guideline |
+| Backup model | Nemotron 3 Ultra | Top score (100%) in the same benchmark; slower, so used only when the bot model times out or errors |
+| Judge model | gpt-oss-120b on the NVIDIA API | A different model family from the bot, so the bot is not grading itself. Speed does not matter for judging |
 | Speech | ElevenLabs Flash v2.5, swappable | ~100 ms model latency; Sarvam Bulbul V4 Flash is the comparison |
 | Demo | Laptop mic and speaker | Telephony is days of plumbing; listed under "what we cut" |
 | OTP | Mocked, with an enforce on/off switch | Lets us reproduce the "balance without OTP" failure on demand |
@@ -17,13 +19,15 @@ Phase 1 (development) plan. Testing strategy (phase 2) and the final writeup (ph
 | Before OTP | Confirm identity and that a payment is overdue, no amounts | The brief bans only the balance; a reminder needs some context |
 | Outcome | POST to a webhook.site URL, plus a local copy | The brief says a webhook is enough |
 
-Accounts needed: Sarvam, ElevenLabs, OpenRouter (buy $10 of credit once to lift the free-model limit from 50 to 1,000 requests a day), webhook.site.
+Accounts needed: Sarvam, ElevenLabs, NVIDIA (join the free NVIDIA Developer Program and create an API key on build.nvidia.com), webhook.site.
+
+Before stage 1, confirm on build.nvidia.com that all three model IDs are available to your key, and note how each model's thinking is switched off. NVIDIA logs requests on its free endpoints; that is acceptable because all customer data here is fictional.
 
 ## 2. Architecture
 
 ```
 Voice mode
-  mic → Sarvam STT → [turn manager] → LLM (OpenRouter) ⇄ tools → [guardrail] → [speech normaliser] → ElevenLabs TTS → speaker
+  mic → Sarvam STT → [turn manager] → LLM (NVIDIA API) ⇄ tools → [guardrail] → [speech normaliser] → ElevenLabs TTS → speaker
                                                    │
                                                    └→ record_outcome → outcome builder → webhook + runs/outcomes/
 
@@ -76,9 +80,9 @@ Paste one prompt per session. Each assumes `CLAUDE.md` is in the repo root.
 ```
 Set up this repo for the project described in CLAUDE.md.
 - Create the folder layout from docs/BUILD_PLAN.md section 2, with empty modules and a README stub.
-- Add requirements.txt with pipecat-ai and the extras needed for Sarvam, ElevenLabs, OpenRouter and local audio. Check Pipecat's current docs for the exact extras names.
-- Add .env.example with SARVAM_API_KEY, ELEVENLABS_API_KEY, ELEVENLABS_VOICE_ID, OPENROUTER_API_KEY, BOT_MODEL, BACKUP_MODEL, JUDGE_MODEL, WEBHOOK_URL, ENFORCE_OTP, BOT_VERSION, TTS_PROVIDER.
-- Add config.py that loads these with sensible defaults (models from CLAUDE.md, ENFORCE_OTP=true, BOT_VERSION=v2, TTS_PROVIDER=elevenlabs).
+- Add requirements.txt with pipecat-ai and the extras needed for Sarvam, ElevenLabs, NVIDIA (pipecat-ai[nvidia]) and local audio. Check Pipecat's current docs for the exact extras names.
+- Add .env.example with SARVAM_API_KEY, ELEVENLABS_API_KEY, ELEVENLABS_VOICE_ID, NVIDIA_API_KEY, NVIDIA_BASE_URL, BOT_MODEL, BACKUP_MODEL, JUDGE_MODEL, WEBHOOK_URL, ENFORCE_OTP, BOT_VERSION, TTS_PROVIDER.
+- Add config.py that loads these with sensible defaults (NVIDIA_BASE_URL=https://integrate.api.nvidia.com/v1, models from CLAUDE.md, ENFORCE_OTP=true, BOT_VERSION=v2, TTS_PROVIDER=elevenlabs).
 - Add .gitignore covering .env, runs/, __pycache__, audio files.
 Commit as "Repo scaffold". Do not write any agent logic yet.
 ```
@@ -87,15 +91,26 @@ Commit as "Repo scaffold". Do not write any agent logic yet.
 
 ```
 Build scripts/spike.py: the smallest Pipecat pipeline that proves the stack works end to end.
-- Local mic and speaker transport, Sarvam STT, OpenRouter LLM using BOT_MODEL with a one-line system prompt ("You are a polite assistant. Reply in one short English sentence."), ElevenLabs Flash v2.5 TTS.
-- Turn reasoning/thinking off for the model if OpenRouter exposes a setting for it; tell me what you found.
+- Local mic and speaker transport, Sarvam STT, Pipecat's NvidiaLLMService using BOT_MODEL and NVIDIA_BASE_URL with a one-line system prompt ("You are a polite assistant. Reply in one short English sentence."), ElevenLabs Flash v2.5 TTS. Pass the model through the service's settings object, not the deprecated model argument.
+- Turn thinking off for the model. Check NVIDIA's API docs for how this model does it (for example a system-prompt flag or a chat template setting) and tell me what you found. Confirm no thinking text reaches the speech step.
 - Enable Pipecat metrics and print, per turn: STT final transcript time, LLM time to first token, TTS time to first audio, and total time from end of my speech to first bot audio.
 - Add a --model flag so I can rerun with BACKUP_MODEL.
-- Also write scripts/llm_latency.py that sends the same 10 short prompts to each model in BOT_MODEL and BACKUP_MODEL through OpenRouter and reports median and p95 time to first token, plus any errors or empty replies.
+- Also write scripts/llm_latency.py that sends the same 10 short prompts to BOT_MODEL, BACKUP_MODEL and JUDGE_MODEL through the NVIDIA API and reports median and p95 time to first token, plus any errors or empty replies. Include one prompt with a tool definition to confirm each model returns a proper tool call.
 Do not build the collections logic. Show me how to run both scripts.
 ```
 
 After this stage: record the latency numbers, and check whether Sarvam returns Hindi words in Devanagari or Latin script.
+
+### If stages 0–1 were already built on OpenRouter
+
+```
+We are moving model calls from OpenRouter to the NVIDIA API directly. Read the updated CLAUDE.md first.
+- Replace OpenRouter everywhere with Pipecat's NvidiaLLMService (pipecat-ai[nvidia]) and, outside Pipecat, an OpenAI-compatible client pointed at NVIDIA_BASE_URL.
+- In .env.example and config.py: remove OPENROUTER_API_KEY; add NVIDIA_API_KEY and NVIDIA_BASE_URL (default https://integrate.api.nvidia.com/v1); set BOT_MODEL, BACKUP_MODEL and JUDGE_MODEL defaults to the IDs in CLAUDE.md.
+- Update scripts/spike.py and scripts/llm_latency.py to match the stage 1 prompt in docs/BUILD_PLAN.md, then show me how to rerun them.
+- Search the repo for any remaining "openrouter" references and remove them.
+Commit as "Switch model provider to NVIDIA API".
+```
 
 ### Stage 2: Agent core in text mode, v1
 
@@ -106,7 +121,7 @@ Build the agent core described in CLAUDE.md and docs/BUILD_PLAN.md section 2, ru
 - agent/outcome.py: validate the outcome against the schema in CLAUDE.md, write it to runs/outcomes/, POST it to WEBHOOK_URL with one retry, never crash the call if the webhook fails.
 - If a call ends without record_outcome being called, run a post-call extraction with JUDGE_MODEL over the transcript and mark captured_by as post_call_extraction.
 - agent/prompts/v1.md: the bank's starting prompt, copied exactly from the assignment (I will paste it). v1 receives the account summary in its context because the prompt says it "knows everything about the customer's account".
-- agent/core.py: one Agent class that takes customer text and returns bot text, calls tools through OpenRouter tool calling, falls back to BACKUP_MODEL on timeout (8 s) or error, and logs every turn, tool call and latency to runs/transcripts/<call_id>.json.
+- agent/core.py: one Agent class that takes customer text and returns bot text, calls tools through the NVIDIA API's OpenAI-compatible tool calling, strips any thinking text from replies, falls back to BACKUP_MODEL on timeout (8 s) or error, and logs every turn, tool call and latency to runs/transcripts/<call_id>.json.
 - A CLI: python -m agent.chat --customer C001 --version v1 for a typed conversation.
 Commit as "Agent core and v1". Show me one sample transcript.
 ```
