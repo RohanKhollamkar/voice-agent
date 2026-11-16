@@ -32,6 +32,7 @@ from pipecat.transports.local.audio import (
     LocalAudioTransport,
     LocalAudioTransportParams,
 )
+from pipecat.workers.runner import WorkerRunner
 
 import config
 
