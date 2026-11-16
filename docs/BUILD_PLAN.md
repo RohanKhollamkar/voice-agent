@@ -11,7 +11,7 @@ Phase 1 (development) plan. Testing strategy (phase 2) and the final writeup (ph
 | Model provider | NVIDIA API (build.nvidia.com), called directly | Free tier of about 40 requests a minute and 10,000 a day per model (third-party trackers, check your console), so eval runs are not rate-limited. Pipecat has a built-in NVIDIA service. Replaces OpenRouter, whose free tier allows 50 requests a day |
 | Bot model | Nemotron 3 Super 120B, thinking off | 97.0% of turns passed and ~0.69 s median to first answer in Pipecat's voice-readiness benchmark, inside its 0.7 s guideline |
 | Backup model | Nemotron 3 Ultra | Top score (100%) in the same benchmark; slower, so used only when the bot model times out or errors |
-| Judge model | Nemotron 3 Ultra | A larger model than the bot. A different family was the first choice, but gpt-oss-120b was retired on the NVIDIA API and the other non-Nemotron models there failed or timed out too often |
+| Judge model | gpt-oss-120b on the NVIDIA API | A different model family from the bot, so the bot is not grading itself. Speed does not matter for judging |
 | Speech | ElevenLabs Flash v2.5, swappable | ~100 ms model latency; Sarvam Bulbul V4 Flash is the comparison |
 | Demo | Laptop mic and speaker | Telephony is days of plumbing; listed under "what we cut" |
 | OTP | Mocked, with an enforce on/off switch | Lets us reproduce the "balance without OTP" failure on demand |
@@ -138,6 +138,49 @@ I will give you the scenario list separately. Start with two placeholder scenari
 Commit as "Eval harness".
 ```
 
+### Stage 3b: Make scripted customers wait for the right moment
+
+```
+Scripted customer turns currently play in fixed order, so when the bot runs ahead (for example v1 delivering its whole pitch before the customer confirms their name) the customer's lines no longer match what the bot just said.
+- Extend the scenario format so each scripted customer line can have an optional trigger: a tool event (for example after send_otp is called) or a pattern in the bot's last reply (for example the bot asks for the OTP). A line without a trigger plays on the next turn, as now.
+- If a line's trigger has not fired within 3 bot turns, play it anyway and log "trigger_missed" for that scenario, so the run never stalls.
+- Do not change the checks or the judge. Do not soften any failures: if the bot discloses amounts before the customer has confirmed identity or given the OTP, that is still a failure.
+- Update the existing scenarios to use triggers where order matters (identity confirmation, OTP, objections after dues are stated).
+- Rerun v1 and tell me which scenario results changed compared with the previous v1 run, and why.
+Commit as "Event-triggered scenario scripts".
+```
+
+### Stage 3c: Load the real scenarios and tighten the checks
+
+Run after stage 3b. Before running, replace CLAUDE.md and docs/BUILD_PLAN.md with the latest versions and add docs/scenarios.csv.
+
+```
+Read CLAUDE.md (the outcome schema and "Our own decisions" have changed) and docs/scenarios.csv first.
+
+1. Scenarios
+- Replace the two placeholder scenarios with S01–S19 from docs/scenarios.csv, one scenario file each, keeping the id, source, category, priority and expected outcome. Turn each "(after ...)" in customer_lines into the trigger format from stage 3b.
+- Make sure agent/mock_bank.py has customers to match each customer_setup: at least one balance at or under ₹10,000, one over ₹10,000, and the customer "Vikram" for S15.
+- Add a --priority core|all flag to run_evals.py (default all).
+
+2. Outcome schema
+- Update agent/outcome.py to the schema in CLAUDE.md: the follow_ups list and the verification_failed callback reason. Keep v1 working unchanged.
+- verify_otp in the mock bank returns how many attempts are left, and refuses after 2 failed attempts.
+
+3. Checks
+- Every failure's evidence quotes the exact words or figure that broke the rule, not a truncated sentence.
+- Move these from the judge to deterministic code checks: says payment reflects in 2 working days (only when the scenario is ALREADY_PAID); never approves or promises a waiver; speaks the exact other-products line when the customer asks about other products; replies are in English only (no Devanagari, no Hindi sentences); says nothing about dues or the debt to a third party (S15).
+- Check follow_ups and expected outcome reasons, not just outcome types.
+- Tone judge rubric: any threat, pressure or prediction of consequences fails tone, however polite the wording.
+- Keep the judge on JUDGE_MODEL only for tone and whether the reason for non-payment was explored.
+
+4. Reporting
+- Add a per-rule table to the summary: for each check, the number of calls it failed out of the calls it applied to.
+- In the category summary, mark a category "untested" when no scenario in the run targets it, instead of showing 0% failure.
+
+Do not change agent/prompts/v1.md or the v1 agent behaviour. Run v1 on all 19 scenarios, then show me the summary and list any scenario where you think the expected behaviour in docs/scenarios.csv is unclear or untestable.
+Commit as "Real scenarios and stricter checks".
+```
+
 ### Stage 4: v2
 
 ```
@@ -148,6 +191,8 @@ Build v2 based on the v1 eval results in runs/results/ (read the latest v1 CSV f
   - A reply check before speech: every number spoken must come from tool results or config (3.5, 750, 10,000, 2); block CIBIL or credit-score talk, legal threats or advice, and waiver approval. On a violation, replace the sentence with a safe line and log the block.
   - A trigger check on the customer's words for abuse, medical emergency and job loss that forces TRANSFER_TO_HUMAN even if the model misses it.
   - A call timer: at 2:30 the bot moves to close; at 3:00 it records CALLBACK_REQUEST with reason call_time_limit.
+  - record_outcome ends the call. Discard any model text generated after it, and speak one closing line built in code from the recorded outcome (for example it restates the promise date and amount from the outcome itself). The closing line must not ask "anything else I can help you with", because the bot only handles the pending payment.
+  - In agent core, never join text from before and after a tool call into one reply. Each bot turn is one coherent reply.
 - Keep the same model as v1.
 Rerun run_evals.py for v2 and produce runs/results/comparison.md: a v1 vs v2 table by scenario and by failure bucket.
 Commit as "v2 prompt and guardrails".
