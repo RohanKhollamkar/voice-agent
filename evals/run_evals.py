@@ -13,6 +13,7 @@ import argparse
 import asyncio
 import csv
 import json
+import re
 from pathlib import Path
 
 import yaml
@@ -21,12 +22,20 @@ from openai import AsyncOpenAI, OpenAIError
 import config
 from agent import mock_bank
 from agent.core import Agent, now
+from agent.tools import TOOLS
 from evals.checks import Check, run_checks
 from evals.judge import judge_call
 
 SCENARIOS_DIR = Path(__file__).parent / "scenarios"
 BUCKETS = ("factual", "compliance", "scope_drift", "adherence")
 HANGUP = "[HANGUP]"
+
+# Scripted customers: a line can wait for a trigger. While it waits, the customer
+# says WAITING_LINE to let the bot carry on. After this many bot turns without
+# the trigger, the line is played anyway and logged, so a run never stalls.
+MAX_WAIT_BOT_TURNS = 3
+WAITING_LINE = "Okay."
+TRIGGER_KEYS = ("after_tool", "after_bot_says", "after_bot_has_said")
 
 CUSTOMER_PROMPT = """\
 You are playing a bank customer in a phone call, to test the bank's collections bot.
@@ -58,6 +67,10 @@ def load_scenarios(only: str | None = None) -> list[dict]:
             raise ValueError(f"{path.name}: bucket must be one of {list(BUCKETS)}")
         if ("customer_turns" in scenario) == ("persona" in scenario):
             raise ValueError(f"{path.name}: give customer_turns or persona, not both")
+        if "customer_turns" in scenario:
+            scenario["customer_turns"] = [
+                _scripted_line(turn, path.name) for turn in scenario["customer_turns"]
+            ]
         if "behaviour" not in scenario["expected"]:
             raise ValueError(f"{path.name}: expected needs a 'behaviour' line")
         mock_bank.get_customer(scenario["customer_id"])  # raises if unknown
@@ -67,6 +80,67 @@ def load_scenarios(only: str | None = None) -> list[dict]:
         if not scenarios:
             raise ValueError(f"No scenario with id '{only}'")
     return scenarios
+
+
+def _scripted_line(turn: str | dict, file_name: str) -> dict:
+    """Check one scripted customer line and return it as {"say": ..., trigger...}."""
+    line = {"say": turn} if isinstance(turn, str) else turn
+    allowed = {"say", "while_waiting", *TRIGGER_KEYS}
+    if "say" not in line or set(line) - allowed:
+        raise ValueError(
+            f"{file_name}: a customer turn needs 'say' and only {sorted(allowed)}"
+        )
+    if sum(key in line for key in TRIGGER_KEYS) > 1:
+        raise ValueError(f"{file_name}: a customer turn can have only one trigger")
+    if "after_tool" in line and line["after_tool"] not in TOOLS:
+        raise ValueError(f"{file_name}: after_tool must be one of {list(TOOLS)}")
+    for key in ("after_bot_says", "after_bot_has_said"):
+        if key in line:
+            re.compile(line[key])  # raises on a broken pattern
+    return line
+
+
+def trigger_fired(line: dict, agent: Agent, bot_reply: str) -> bool:
+    """Has the moment this scripted line is waiting for arrived?"""
+    if "after_tool" in line:  # the bot has called this tool at some point in the call
+        return any(
+            e["type"] == "tool_call" and e["name"] == line["after_tool"]
+            for e in agent.events
+        )
+    if "after_bot_says" in line:  # the bot's last reply matches this pattern
+        return re.search(line["after_bot_says"], bot_reply, re.IGNORECASE) is not None
+    if "after_bot_has_said" in line:  # any bot reply so far in the call matches
+        pattern = re.compile(line["after_bot_has_said"], re.IGNORECASE)
+        return any(
+            e["type"] == "bot" and pattern.search(e["text"]) for e in agent.events
+        )
+    return True  # no trigger: play on the next turn
+
+
+async def play_script(
+    agent: Agent, scenario: dict, bot_reply: str, pace: float
+) -> list[str]:
+    """Play the scripted customer lines, each at its trigger. Returns the lines whose
+    trigger never fired and which were played anyway (trigger_missed)."""
+    otp = mock_bank.get_customer(scenario["customer_id"])["otp"]
+    missed = []
+    for line in scenario["customer_turns"]:
+        bot_turns = 1  # the reply the customer has just heard counts as the first
+        while not agent.ended and not trigger_fired(line, agent, bot_reply):
+            if bot_turns >= MAX_WAIT_BOT_TURNS:
+                trigger = next(
+                    f"{key}: {line[key]}" for key in TRIGGER_KEYS if key in line
+                )
+                missed.append(f'"{line["say"]}" ({trigger})')
+                break
+            await asyncio.sleep(pace)
+            bot_reply = await agent.respond(line.get("while_waiting", WAITING_LINE))
+            bot_turns += 1
+        if agent.ended:
+            break
+        await asyncio.sleep(pace)  # stay under the provider's requests-per-minute limit
+        bot_reply = await agent.respond(line["say"].replace("{otp}", otp))
+    return missed
 
 
 async def simulated_customer_line(
@@ -105,31 +179,29 @@ async def simulated_customer_line(
 
 async def run_call(
     client: AsyncOpenAI, scenario: dict, version: str, pace: float
-) -> dict:
-    """Play one scenario against the bot and return the finished transcript."""
+) -> tuple[dict, list[str]]:
+    """Play one scenario against the bot. Returns the finished transcript and any
+    scripted lines that were played without their trigger."""
     agent = Agent(scenario["customer_id"], version, client=client)
-    customer = mock_bank.get_customer(scenario["customer_id"])
-    spoken = [("bot", await agent.start())]
+    bot_reply = await agent.start()
 
-    scripted = [
-        t.replace("{otp}", customer["otp"]) for t in scenario.get("customer_turns", [])
-    ]
-    max_turns = len(scripted) if scripted else scenario.get("max_turns", 10)
-    for turn in range(max_turns):
-        if agent.ended:
-            break
-        await asyncio.sleep(pace)  # stay under the provider's requests-per-minute limit
-        if scripted:
-            line = scripted[turn]
-        else:
+    missed = []
+    if "customer_turns" in scenario:
+        missed = await play_script(agent, scenario, bot_reply, pace)
+    else:
+        spoken = [("bot", bot_reply)]
+        for _ in range(scenario.get("max_turns", 10)):
+            if agent.ended:
+                break
+            await asyncio.sleep(pace)
             line = await simulated_customer_line(client, scenario, spoken)
             if HANGUP in line:
                 break
-        spoken.append(("customer", line))
-        spoken.append(("bot", await agent.respond(line)))
+            spoken.append(("customer", line))
+            spoken.append(("bot", await agent.respond(line)))
 
     await agent.finish()
-    return json.loads(agent.transcript_path.read_text(encoding="utf-8"))
+    return json.loads(agent.transcript_path.read_text(encoding="utf-8")), missed
 
 
 def summarise(rows: list[dict], version: str) -> str:
@@ -157,6 +229,13 @@ def summarise(rows: list[dict], version: str) -> str:
     if not failures:
         lines.append("  none")
 
+    missed = {
+        r["scenario_id"]: r["trigger_missed"] for r in rows if r["trigger_missed"]
+    }
+    if missed:
+        lines += ["", "trigger_missed (scripted lines played without their trigger):"]
+        lines += [f"  {scenario_id}  {text}" for scenario_id, text in missed.items()]
+
     errors = [r for r in rows if r["result"] == "error"]
     if errors:
         lines += ["", f"Checks that could not run: {len(errors)} (see the CSV)"]
@@ -182,7 +261,9 @@ async def main(version: str, only: str | None, pace: float, post_webhook: bool) 
     rows = []
     for number, scenario in enumerate(scenarios, start=1):
         print(f"[{number}/{len(scenarios)}] {scenario['id']}")
-        transcript = await run_call(client, scenario, version, pace)
+        transcript, missed = await run_call(client, scenario, version, pace)
+        for line in missed:
+            print(f"    trigger_missed {line}")
         checks: list[Check] = run_checks(transcript, scenario)
         checks += await judge_call(client, transcript, scenario)
         backup_used = any(e["type"] == "llm_error" for e in transcript["events"])
@@ -202,6 +283,7 @@ async def main(version: str, only: str | None, pace: float, post_webhook: bool) 
                     "result": check.result,
                     "evidence": check.evidence,
                     "backup_model_used": "yes" if backup_used else "no",
+                    "trigger_missed": "; ".join(missed),
                     "call_id": transcript["call_id"],
                     "transcript_path": f"runs/transcripts/{transcript['call_id']}.json",
                 }
