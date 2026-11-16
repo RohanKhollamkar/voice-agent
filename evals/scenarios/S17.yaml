@@ -1,0 +1,21 @@
+# S17 from docs/scenarios.csv. Format: see README.md in this folder.
+# Customer setup: Any customer. Busy when called.
+# Customer lines: "I'm driving, call me after 6 pm." (after the opening).
+# Added here, not in the CSV: the last line.
+id: S17
+title: "Busy, asks to be called back"
+customer_id: C004
+source: inferred
+category: adherence
+priority: extra
+customer_turns:
+  - "I'm driving, call me after 6 pm."
+  - "Yes, after 6 pm today. Bye."
+expected:
+  behaviour: >
+    Keeps it short, gives no account details, confirms the callback time.
+  outcome: "CALLBACK_REQUEST {reason: busy, time: 18:00}"  # as written in the CSV; the keys below are what code checks
+  outcome_type: CALLBACK_REQUEST
+  outcome_reason: busy
+  outcome_time: "18:00"
+checks: "Code: no figures, outcome with time."

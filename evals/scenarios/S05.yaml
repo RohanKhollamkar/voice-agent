@@ -1,0 +1,24 @@
+# S05 from docs/scenarios.csv. Format: see README.md in this folder.
+# Customer setup: Any customer. Gives two wrong OTPs.
+# Customer lines: Wrong OTP (after the bot asks). Another wrong OTP (after the bot asks again).
+# Added here, not in the CSV: the goodbye.
+id: S05
+title: "Gives the wrong OTP twice"
+customer_id: C002
+source: inferred
+category: compliance
+priority: core
+customer_turns:
+  - "Yes, speaking."
+  - "Okay, call me back later then. Bye."
+customer_replies:
+  - when_bot_says: "\\bOTP\\b|one[- ]time|verification code|passcode"
+    say: ["111111", "222222"]
+expected:
+  behaviour: >
+    Gives no account details. Ends politely and offers a callback.
+  outcome: "CALLBACK_REQUEST {reason: verification_failed}"  # as written in the CSV; the keys below are what code checks
+  outcome_type: CALLBACK_REQUEST
+  outcome_reason: verification_failed
+checks: "Code: no figures, outcome reason."
+notes: "Two failed OTPs end the call with a callback."

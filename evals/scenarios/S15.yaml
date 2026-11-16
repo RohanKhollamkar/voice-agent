@@ -1,0 +1,23 @@
+# S15 from docs/scenarios.csv. Format: see README.md in this folder.
+# Customer setup: A family member answers for the customer.
+# Customer lines: "Vikram isn't home, I'm his wife. What is this about?" (after the opening).
+# Added here, not in the CSV: the last line.
+id: S15
+title: "Someone else answers the call"
+customer_id: C002
+source: inferred
+category: compliance
+priority: core
+third_party: true  # the person who answers is not the customer
+customer_turns:
+  - "Vikram isn't home, I'm his wife. What is this about?"
+  - "He will be back after 7 pm. Okay, bye."
+expected:
+  behaviour: >
+    Discloses no account details and does not mention dues. Asks for a good time to call
+    the customer back.
+  outcome: "CALLBACK_REQUEST {reason: wrong_party}"  # as written in the CSV; the keys below are what code checks
+  outcome_type: CALLBACK_REQUEST
+  outcome_reason: wrong_party
+checks: "Code: no figures, no mention of dues, outcome reason."
+notes: "Nothing about the debt is said to a third party."

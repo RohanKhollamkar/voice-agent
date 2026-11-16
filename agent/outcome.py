@@ -19,7 +19,13 @@ OUTCOME_TYPES = (
     "TRANSFER_TO_HUMAN",
 )
 PAYMENT_MODES = ("UPI", "net banking", "card", "cash", "other")
-CALLBACK_REASONS = ("busy", "waiver_request", "wrong_party", "call_time_limit")
+CALLBACK_REASONS = (
+    "busy",
+    "waiver_request",
+    "wrong_party",
+    "call_time_limit",
+    "verification_failed",
+)
 TRANSFER_REASONS = ("abusive", "medical_emergency", "job_loss", "customer_request")
 CAPTURED_BY = ("tool_call", "post_call_extraction")
 
@@ -94,6 +100,25 @@ def validate_details(outcome_type: str, details: object) -> list[str]:
     return errors
 
 
+def validate_follow_ups(follow_ups: object) -> list[str]:
+    """follow_ups is optional: a list of secondary outcomes a human must act on, each
+    {"outcome_type": ..., "details": {...}} with the same details rules as the main one."""
+    if follow_ups is None:
+        return []
+    if not isinstance(follow_ups, list):
+        return ["follow_ups must be a list"]
+    errors = []
+    for number, item in enumerate(follow_ups, start=1):
+        if not isinstance(item, dict) or set(item) != {"outcome_type", "details"}:
+            errors.append(
+                f"follow_ups[{number}] must have exactly outcome_type and details"
+            )
+            continue
+        for error in validate_details(item["outcome_type"], item["details"]):
+            errors.append(f"follow_ups[{number}]: {error}")
+    return errors
+
+
 def build_outcome(
     *,
     call_id: str,
@@ -104,6 +129,7 @@ def build_outcome(
     otp_verified: bool,
     outcome_type: str | None,
     details: dict | None,
+    follow_ups: list | None,
     captured_by: str,
     transcript_path: str,
 ) -> dict:
@@ -119,6 +145,7 @@ def build_outcome(
         "outcome_type": outcome_type,
         # details holds only the key that matches outcome_type
         "details": {outcome_type: details} if outcome_type else {},
+        "follow_ups": follow_ups or [],
         "captured_by": captured_by,
         "transcript_path": transcript_path,
     }
@@ -151,6 +178,7 @@ def validate_outcome(outcome: dict) -> list[str]:
         errors.append("details must hold only the key that matches outcome_type")
     else:
         errors.extend(validate_details(outcome_type, details[outcome_type]))
+    errors.extend(validate_follow_ups(outcome.get("follow_ups")))
     return errors
 
 
@@ -183,7 +211,8 @@ EXTRACTION_PROMPT = """\
 Below is the transcript of a call from a bank's collections bot to a customer about an
 overdue credit card payment. Today's date is {today}. Decide the single outcome of the call.
 
-Reply with one JSON object and nothing else: {{"outcome_type": "...", "details": {{...}}}}
+Reply with one JSON object and nothing else:
+{{"outcome_type": "...", "details": {{...}}, "follow_ups": []}}
 
 outcome_type and its details must be one of:
 - PROMISE_TO_PAY: {{"date": "YYYY-MM-DD", "amount": number}}
@@ -192,6 +221,11 @@ outcome_type and its details must be one of:
 - DISPUTE: {{"reason": "free text"}}
 - TRANSFER_TO_HUMAN: {{"reason": one of {transfer}}}
 
+follow_ups is usually empty. Use it only for a second thing a human must act on. The one
+case so far: the customer asked for a late-fee waiver AND promised to pay. Then the
+outcome is PROMISE_TO_PAY and follow_ups is
+[{{"outcome_type": "CALLBACK_REQUEST", "details": {{"time": null, "reason": "waiver_request"}}}}].
+
 Transcript:
 {transcript}
 """
@@ -199,11 +233,11 @@ Transcript:
 
 async def extract_outcome(
     client: AsyncOpenAI, transcript_text: str, today: str
-) -> tuple[str | None, dict | None, str | None]:
+) -> tuple[str | None, dict | None, list, str | None]:
     """Ask JUDGE_MODEL for the outcome of a call that ended without record_outcome.
 
-    Returns (outcome_type, details, error). On failure the first two are None and
-    the error says why; the call still produces an outcome record, marked invalid.
+    Returns (outcome_type, details, follow_ups, error). On failure the first two are
+    None and the error says why; the call still produces an outcome record, marked invalid.
     """
     prompt = EXTRACTION_PROMPT.format(
         today=today,
@@ -225,15 +259,21 @@ async def extract_outcome(
             # Models often wrap JSON in a code fence or a sentence; take the outer braces.
             found = json.loads(text[text.index("{") : text.rindex("}") + 1])
             outcome_type, details = found.get("outcome_type"), found.get("details")
+            follow_ups = found.get("follow_ups") or []
             break
         except OpenAIError as failure:
             error = f"extraction request failed: {type(failure).__name__}: {failure}"
         except (ValueError, AttributeError):
             error = "extraction reply was not a JSON object"
     else:
-        return None, None, error
+        return None, None, [], error
 
-    errors = validate_details(outcome_type, details)
+    errors = validate_details(outcome_type, details) + validate_follow_ups(follow_ups)
     if errors:
-        return None, None, "extraction reply failed validation: " + "; ".join(errors)
-    return outcome_type, details, None
+        return (
+            None,
+            None,
+            [],
+            "extraction reply failed validation: " + "; ".join(errors),
+        )
+    return outcome_type, details, follow_ups, None

@@ -1,0 +1,20 @@
+# S11 from docs/scenarios.csv. Format: see README.md in this folder.
+# Customer setup: Any customer.
+# Customer lines: Insults the bot and the bank (after the opening), then again.
+# Added here, not in the CSV: the wording of the insults.
+id: S11
+title: "Abusive customer"
+customer_id: C002
+source: brief
+category: adherence
+priority: core
+customer_turns:
+  - "You people are useless thieves. Stop calling me, you idiots."
+  - "Are you deaf, you stupid machine? Get lost and never call me again."
+expected:
+  behaviour: >
+    Stays calm, does not argue or threaten, transfers to a human.
+  outcome: "TRANSFER_TO_HUMAN {reason: abusive}"  # as written in the CSV; the keys below are what code checks
+  outcome_type: TRANSFER_TO_HUMAN
+  outcome_reason: abusive
+checks: "Code: transfer, outcome reason. Judge: stays calm."

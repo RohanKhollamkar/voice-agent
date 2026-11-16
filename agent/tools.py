@@ -15,6 +15,7 @@ from agent.outcome import (
     PAYMENT_MODES,
     TRANSFER_REASONS,
     validate_details,
+    validate_follow_ups,
 )
 
 
@@ -28,8 +29,10 @@ class CallState:
     started_at: datetime
     otp_sent: bool = False
     otp_verified: bool = False
+    otp_failed_attempts: int = 0
     outcome_type: str | None = None
     outcome_details: dict | None = None
+    follow_ups: list | None = None
 
 
 def late_fee(outstanding_balance: float) -> int:
@@ -47,17 +50,34 @@ def send_otp(state: CallState) -> dict:
 
 
 def verify_otp(state: CallState, code: str) -> dict:
+    """Check the code. After MAX_OTP_ATTEMPTS wrong codes it refuses, even a right one."""
     if not state.otp_sent:
         return {
             "verified": False,
             "error": "No OTP has been sent yet. Call send_otp first.",
         }
+    refused = {
+        "verified": False,
+        "attempts_left": 0,
+        "error": "Verification failed: no attempts left. Share no account details. "
+        "End the call: record CALLBACK_REQUEST with reason verification_failed.",
+    }
+    if state.otp_failed_attempts >= config.MAX_OTP_ATTEMPTS:
+        return refused
     customer = mock_bank.get_customer(state.customer_id)
     digits = "".join(ch for ch in str(code) if ch.isdigit())
-    if digits != customer["otp"]:
-        return {"verified": False, "error": "The code does not match."}
-    state.otp_verified = True
-    return {"verified": True}
+    if digits == customer["otp"]:
+        state.otp_verified = True
+        return {"verified": True}
+    state.otp_failed_attempts += 1
+    attempts_left = config.MAX_OTP_ATTEMPTS - state.otp_failed_attempts
+    if attempts_left == 0:
+        return refused
+    return {
+        "verified": False,
+        "attempts_left": attempts_left,
+        "error": "The code does not match.",
+    }
 
 
 def get_account_summary(state: CallState) -> dict:
@@ -77,18 +97,21 @@ def get_account_summary(state: CallState) -> dict:
     }
 
 
-def record_outcome(state: CallState, outcome_type: str, details: dict) -> dict:
+def record_outcome(
+    state: CallState, outcome_type: str, details: dict, follow_ups: list | None = None
+) -> dict:
     """Record the call's single outcome. Recording it ends the call."""
     if state.outcome_type is not None:
         return {
             "recorded": False,
             "error": "An outcome is already recorded for this call.",
         }
-    errors = validate_details(outcome_type, details)
+    errors = validate_details(outcome_type, details) + validate_follow_ups(follow_ups)
     if errors:
         return {"recorded": False, "error": "Fix and call again: " + "; ".join(errors)}
     state.outcome_type = outcome_type
     state.outcome_details = details
+    state.follow_ups = follow_ups or []
     return {"recorded": True, "next": "Say a short goodbye. The call ends after it."}
 
 
@@ -178,6 +201,24 @@ TOOL_SCHEMAS = [
                     'DISPUTE: {"reason": free text}. '
                     f'TRANSFER_TO_HUMAN: {{"reason": one of {list(TRANSFER_REASONS)}}}.'
                 ),
+            },
+            "follow_ups": {
+                "type": "array",
+                "description": (
+                    "Optional, usually omitted. A second thing a human must act on, "
+                    "each item shaped like the main outcome. Example: the customer "
+                    "asks for a waiver and also promises to pay, so the outcome is "
+                    'PROMISE_TO_PAY with follow_ups [{"outcome_type": "CALLBACK_REQUEST", '
+                    '"details": {"time": null, "reason": "waiver_request"}}].'
+                ),
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "outcome_type": {"type": "string", "enum": list(OUTCOME_TYPES)},
+                        "details": {"type": "object"},
+                    },
+                    "required": ["outcome_type", "details"],
+                },
             },
         },
         ["outcome_type", "details"],

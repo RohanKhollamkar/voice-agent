@@ -232,15 +232,17 @@ class Agent:
         if self.state.outcome_type is None:
             # The bot never called record_outcome, so read the outcome off the transcript.
             captured_by = "post_call_extraction"
-            outcome_type, details, error = await extract_outcome(
+            outcome_type, details, follow_ups, error = await extract_outcome(
                 self.client, self._transcript_text(), today=f"{now():%Y-%m-%d}"
             )
             self.state.outcome_type, self.state.outcome_details = outcome_type, details
+            self.state.follow_ups = follow_ups
             self._log(
                 type="post_call_extraction",
                 model=config.JUDGE_MODEL,
                 outcome_type=outcome_type,
                 details=details,
+                follow_ups=follow_ups,
                 error=error,
             )
 
@@ -253,6 +255,7 @@ class Agent:
             otp_verified=self.state.otp_verified,
             outcome_type=self.state.outcome_type,
             details=self.state.outcome_details,
+            follow_ups=self.state.follow_ups,
             captured_by=captured_by,
             transcript_path=self.transcript_path.as_posix(),
         )

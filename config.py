@@ -62,6 +62,9 @@ LATE_FEE_BALANCE_THRESHOLD: int = 10_000  # late fee applies only above this bal
 CALL_MAX_SECONDS: int = 180
 SPEAKING_WORDS_PER_MINUTE: int = 150
 
+# Two wrong OTPs end the call with a callback (our decision, see CLAUDE.md)
+MAX_OTP_ATTEMPTS: int = 2
+
 # Where calls are recorded
 RUNS_DIR: Path = Path("runs")
 TIMEZONE: str = "Asia/Kolkata"

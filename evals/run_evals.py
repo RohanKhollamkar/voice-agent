@@ -1,12 +1,13 @@
-"""Run every scenario against one bot version, in text mode, and score the calls.
+"""Run the scenarios against one bot version, in text mode, and score the calls.
 
 Run from the repo root:
     python -m evals.run_evals --version v1
-    python -m evals.run_evals --version v1 --scenario placeholder_persona_waiver
+    python -m evals.run_evals --version v1 --priority core
+    python -m evals.run_evals --version v1 --scenario S03
 
 Writes runs/results/<version>_<timestamp>.csv (one row per scenario and check) and
-a summary of failure rate by bucket next to it. Transcripts go to runs/transcripts/
-as for any call.
+a summary next to it. Transcripts go to runs/transcripts/ as for any call.
+The scenario file format is described in evals/scenarios/README.md.
 """
 
 import argparse
@@ -27,7 +28,7 @@ from evals.checks import Check, run_checks
 from evals.judge import judge_call
 
 SCENARIOS_DIR = Path(__file__).parent / "scenarios"
-BUCKETS = ("factual", "compliance", "scope_drift", "adherence")
+CATEGORIES = ("factual", "compliance", "scope_drift", "adherence")
 HANGUP = "[HANGUP]"
 
 # Scripted customers: a line can wait for a trigger. While it waits, the customer
@@ -47,34 +48,53 @@ Who you are and how you behave:
 Stay inside this description. Do not invent new facts about yourself (an illness, a
 job loss, a payment you have made) unless the description says so.
 If you are asked for a one-time password, it is {otp}.
-Reply with only the words the customer says: one or two short sentences, as spoken on
-a phone call. Never more than two sentences.
+Reply with only the words the customer says, as spoken on a phone call.
 When the call is over, or you would hang up, reply with exactly {hangup}.
 """
 
 
-def load_scenarios(only: str | None = None) -> list[dict]:
+def load_scenarios(only: str | None = None, priority: str = "all") -> list[dict]:
     """Read and check every scenario file. A broken file stops the run with a clear error."""
     scenarios = []
     for path in sorted(SCENARIOS_DIR.glob("*.yaml")):
         scenario = yaml.safe_load(path.read_text(encoding="utf-8"))
-        for key in ("id", "title", "customer_id", "source", "bucket", "expected"):
+        for key in (
+            "id",
+            "title",
+            "customer_id",
+            "source",
+            "category",
+            "priority",
+            "expected",
+        ):
             if key not in scenario:
                 raise ValueError(f"{path.name}: missing '{key}'")
         if scenario["source"] not in ("brief", "inferred"):
             raise ValueError(f"{path.name}: source must be brief or inferred")
-        if scenario["bucket"] not in BUCKETS:
-            raise ValueError(f"{path.name}: bucket must be one of {list(BUCKETS)}")
+        if scenario["category"] not in CATEGORIES:
+            raise ValueError(f"{path.name}: category must be one of {list(CATEGORIES)}")
+        if scenario["priority"] not in ("core", "extra"):
+            raise ValueError(f"{path.name}: priority must be core or extra")
         if ("customer_turns" in scenario) == ("persona" in scenario):
             raise ValueError(f"{path.name}: give customer_turns or persona, not both")
         if "customer_turns" in scenario:
             scenario["customer_turns"] = [
                 _scripted_line(turn, path.name) for turn in scenario["customer_turns"]
             ]
+        for reply in scenario.get("customer_replies", []):
+            if set(reply) != {"when_bot_says", "say"}:
+                raise ValueError(
+                    f"{path.name}: a customer reply needs when_bot_says and say"
+                )
+            re.compile(reply["when_bot_says"])  # raises on a broken pattern
+            if isinstance(reply["say"], str):
+                reply["say"] = [reply["say"]]
         if "behaviour" not in scenario["expected"]:
             raise ValueError(f"{path.name}: expected needs a 'behaviour' line")
         mock_bank.get_customer(scenario["customer_id"])  # raises if unknown
         scenarios.append(scenario)
+    if priority == "core":
+        scenarios = [s for s in scenarios if s["priority"] == "core"]
     if only:
         scenarios = [s for s in scenarios if s["id"] == only]
         if not scenarios:
@@ -117,29 +137,60 @@ def trigger_fired(line: dict, agent: Agent, bot_reply: str) -> bool:
     return True  # no trigger: play on the next turn
 
 
+def reply_to_question(scenario: dict, used: dict, bot_reply: str) -> str | None:
+    """customer_replies are answers the customer gives only if asked ("the OTP, when the
+    bot asks for it"). If the bot's last reply asks, return the next unused answer."""
+    for number, reply in enumerate(scenario.get("customer_replies", [])):
+        if used.get(number, 0) >= len(reply["say"]):
+            continue
+        if re.search(reply["when_bot_says"], bot_reply, re.IGNORECASE):
+            used[number] = used.get(number, 0) + 1
+            return reply["say"][used[number] - 1]
+    return None
+
+
 async def play_script(
     agent: Agent, scenario: dict, bot_reply: str, pace: float
 ) -> list[str]:
-    """Play the scripted customer lines, each at its trigger. Returns the lines whose
-    trigger never fired and which were played anyway (trigger_missed)."""
+    """Play the scripted customer. Each turn the customer first answers a question the
+    bot has just asked (customer_replies), otherwise says the next line in order, at its
+    trigger. Returns the lines whose trigger never fired and which were played anyway."""
     otp = mock_bank.get_customer(scenario["customer_id"])["otp"]
-    missed = []
+
+    async def say(text: str) -> str:
+        await asyncio.sleep(pace)  # stay under the provider's requests-per-minute limit
+        return await agent.respond(text.replace("{otp}", otp))
+
+    missed, used = [], {}
     for line in scenario["customer_turns"]:
-        bot_turns = 1  # the reply the customer has just heard counts as the first
-        while not agent.ended and not trigger_fired(line, agent, bot_reply):
-            if bot_turns >= MAX_WAIT_BOT_TURNS:
+        waited = (
+            1  # bot turns this line has waited through; the one just heard is the first
+        )
+        while not agent.ended:
+            answer = reply_to_question(scenario, used, bot_reply)
+            if answer is not None:  # answering a question does not count as waiting
+                bot_reply = await say(answer)
+            elif trigger_fired(line, agent, bot_reply):
+                break
+            elif waited >= MAX_WAIT_BOT_TURNS:
                 trigger = next(
                     f"{key}: {line[key]}" for key in TRIGGER_KEYS if key in line
                 )
                 missed.append(f'"{line["say"]}" ({trigger})')
                 break
-            await asyncio.sleep(pace)
-            bot_reply = await agent.respond(line.get("while_waiting", WAITING_LINE))
-            bot_turns += 1
+            else:
+                bot_reply = await say(line.get("while_waiting", WAITING_LINE))
+                waited += 1
         if agent.ended:
             break
-        await asyncio.sleep(pace)  # stay under the provider's requests-per-minute limit
-        bot_reply = await agent.respond(line["say"].replace("{otp}", otp))
+        bot_reply = await say(line["say"])
+
+    # The script is done; keep answering direct questions (a last OTP or mode) if asked.
+    while not agent.ended:
+        answer = reply_to_question(scenario, used, bot_reply)
+        if answer is None:
+            break
+        bot_reply = await say(answer)
     return missed
 
 
@@ -205,22 +256,46 @@ async def run_call(
 
 
 def summarise(rows: list[dict], version: str) -> str:
-    """Failure rate by bucket: the share of scenarios with at least one failed check
-    in that bucket."""
-    scenario_ids = sorted({row["scenario_id"] for row in rows})
+    """The run in three tables: by category, by rule, and every failure with its evidence."""
+    scenario_ids = list(dict.fromkeys(row["scenario_id"] for row in rows))
+    failed_any = {r["scenario_id"] for r in rows if r["result"] == "fail"}
     lines = [
-        f"Eval summary: bot {version}, {len(scenario_ids)} scenarios",
+        (
+            f"Eval summary: bot {version}, {len(scenario_ids)} scenarios, "
+            f"{len(failed_any)} with at least one failed check"
+        ),
         "",
-        "Failure rate by bucket (scenarios with at least one failed check in the bucket):",
+        "By category (of the scenarios that target the category, how many failed a check",
+        "in that category):",
     ]
-    for bucket in BUCKETS:
+    for category in CATEGORIES:
+        targeting = {r["scenario_id"] for r in rows if r["category"] == category}
         failed = {
             r["scenario_id"]
             for r in rows
-            if r["bucket"] == bucket and r["result"] == "fail"
+            if r["category"] == category
+            and r["check_category"] == category
+            and r["result"] == "fail"
         }
-        rate = len(failed) / len(scenario_ids) if scenario_ids else 0
-        lines.append(f"  {bucket:12} {len(failed)}/{len(scenario_ids)}  ({rate:.0%})")
+        if not targeting:
+            lines.append(
+                f"  {category:12} untested (no scenario in this run targets it)"
+            )
+        else:
+            rate = len(failed) / len(targeting)
+            lines.append(
+                f"  {category:12} {len(failed)}/{len(targeting)} failed  ({rate:.0%})"
+            )
+
+    lines += ["", "By rule (calls the check failed, out of calls it applied to):"]
+    for check in dict.fromkeys(row["check"] for row in rows):
+        applied = [
+            r for r in rows if r["check"] == check and r["result"] in ("pass", "fail")
+        ]
+        failed = [r for r in applied if r["result"] == "fail"]
+        where = " ".join(r["scenario_id"] for r in failed)
+        count = f"{len(failed)}/{len(applied)}" if applied else "not applicable"
+        lines.append(f"  {check:24} {count:>6}  {where}".rstrip())
 
     lines += ["", "Failed checks:"]
     failures = [r for r in rows if r["result"] == "fail"]
@@ -248,24 +323,26 @@ def summarise(rows: list[dict], version: str) -> str:
     return "\n".join(lines)
 
 
-async def main(version: str, only: str | None, pace: float, post_webhook: bool) -> None:
+async def main(
+    version: str, only: str | None, priority: str, pace: float, post_webhook: bool
+) -> None:
     if not post_webhook:
         config.WEBHOOK_URL = (
             ""  # eval calls are not real outcomes; keep them off the webhook
         )
-    scenarios = load_scenarios(only)
+    scenarios = load_scenarios(only, priority)
     client = AsyncOpenAI(
         api_key=config.NVIDIA_API_KEY, base_url=config.NVIDIA_BASE_URL, max_retries=0
     )
 
     rows = []
     for number, scenario in enumerate(scenarios, start=1):
-        print(f"[{number}/{len(scenarios)}] {scenario['id']}")
+        print(f"[{number}/{len(scenarios)}] {scenario['id']} {scenario['title']}")
         transcript, missed = await run_call(client, scenario, version, pace)
         for line in missed:
             print(f"    trigger_missed {line}")
         checks: list[Check] = run_checks(transcript, scenario)
-        checks += await judge_call(client, transcript, scenario)
+        checks += await judge_call(client, transcript)
         backup_used = any(e["type"] == "llm_error" for e in transcript["events"])
         for check in checks:
             if check.result in ("fail", "error"):
@@ -275,11 +352,12 @@ async def main(version: str, only: str | None, pace: float, post_webhook: bool) 
                     "scenario_id": scenario["id"],
                     "title": scenario["title"],
                     "source": scenario["source"],
-                    "scenario_bucket": scenario["bucket"],
+                    "category": scenario["category"],
+                    "priority": scenario["priority"],
                     "bot_version": version,
                     "check": check.name,
                     "kind": "judge" if check.name.startswith("judge_") else "code",
-                    "bucket": check.bucket,
+                    "check_category": check.category,
                     "result": check.result,
                     "evidence": check.evidence,
                     "backup_model_used": "yes" if backup_used else "no",
@@ -310,6 +388,12 @@ if __name__ == "__main__":
     parser.add_argument("--version", required=True, choices=["v1", "v2"])
     parser.add_argument("--scenario", help="run only the scenario with this id")
     parser.add_argument(
+        "--priority",
+        choices=["core", "all"],
+        default="all",
+        help="core runs only the core scenarios; all (the default) adds the extra ones",
+    )
+    parser.add_argument(
         "--pace",
         type=float,
         default=1.5,
@@ -321,4 +405,6 @@ if __name__ == "__main__":
         help="also POST each eval call's outcome to WEBHOOK_URL (off by default)",
     )
     args = parser.parse_args()
-    asyncio.run(main(args.version, args.scenario, args.pace, args.post_webhook))
+    asyncio.run(
+        main(args.version, args.scenario, args.priority, args.pace, args.post_webhook)
+    )

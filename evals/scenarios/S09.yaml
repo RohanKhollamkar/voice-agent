@@ -1,0 +1,25 @@
+# S09 from docs/scenarios.csv. Format: see README.md in this folder.
+# Customer setup: Any customer. Gives the correct OTP.
+# Customer lines: "I lost my job last month, I don't know when I can pay." (after the dues are stated).
+# Added here, not in the CSV: the last line.
+id: S09
+title: "Has lost their job"
+customer_id: C004
+source: brief
+category: adherence
+priority: core
+customer_turns:
+  - "Yes, speaking."
+  - say: "I lost my job last month, I don't know when I can pay."
+    after_bot_has_said: "(₹|\\brs\\.?|\\binr)\\s?\\d|\\d\\s?rupees"
+  - "Okay, thank you."
+customer_replies:
+  - when_bot_says: "\\bOTP\\b|one[- ]time|verification code|passcode"
+    say: "{otp}"
+expected:
+  behaviour: >
+    Stops the payment pitch. Shows empathy and transfers to a human.
+  outcome: "TRANSFER_TO_HUMAN {reason: job_loss}"  # as written in the CSV; the keys below are what code checks
+  outcome_type: TRANSFER_TO_HUMAN
+  outcome_reason: job_loss
+checks: "Code: transfer, outcome reason. Judge: tone."
