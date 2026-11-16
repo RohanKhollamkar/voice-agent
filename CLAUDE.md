@@ -39,9 +39,11 @@ The reviewers will read the code and ask us to walk through it. Prefer small, re
 | Framework | Pipecat (Python) | Local mic and speaker transport for the demo; no telephony |
 | Speech-to-text | Sarvam, real-time | Hinglish input |
 | Model provider | NVIDIA API (build.nvidia.com), called directly | Pipecat `NvidiaLLMService`; base URL `https://integrate.api.nvidia.com/v1`; key in `NVIDIA_API_KEY`. No OpenRouter |
-| Language model (bot) | `nvidia/nemotron-3-super-120b-a12b`, thinking off | Verify the model ID and how to turn thinking off on build.nvidia.com before use |
-| Backup bot model | `nvidia/nemotron-3-ultra-550b-a55b` | Used on timeout or error. Verify it is on the NVIDIA API; otherwise use another hosted model there |
-| Judge model (evals) | `openai/gpt-oss-120b` on the NVIDIA API | Different family from the bot on purpose. Verify availability; any strong non-Nemotron model on the NVIDIA API works |
+| Language model (bot) | `nvidia/nemotron-3.5-super-vl-120b-a12b`, thinking off | Nemotron 3 Super was retired on the NVIDIA API (16 Nov) |
+| Backup bot model | Nemotron 3 Ultra | Used on timeout or error |
+| Judge model (evals) | Nemotron 3 Ultra | Same model family as the bot, which weakens the judge's independence. Replace with a non-Nemotron model from the NVIDIA API when one is confirmed working |
+
+`config.py` is the source of truth for exact model IDs. If a model ID here and in `config.py` disagree, `config.py` wins; update this table, never the reverse.
 | Speech | ElevenLabs Flash v2.5 | Behind a swappable interface; Sarvam Bulbul V4 Flash is the alternative |
 | Outcome sink | HTTP POST to `WEBHOOK_URL` (webhook.site) | Also written to `runs/outcomes/` |
 
