@@ -185,6 +185,40 @@ Do not change agent/prompts/v1.md or the v1 agent behaviour. Run v1 on all 19 sc
 Commit as "Real scenarios and stricter checks".
 ```
 
+### Stage 3d: Close the gaps in the checks, then re-baseline v1
+
+Run after stage 3c, before stage 4. Replace docs/scenarios.csv first (S01, S03, S12 and S17 changed).
+
+```
+Read docs/scenarios.csv again: S01, S03, S12 and S17 changed. Update those four scenario files to match, keeping the customer_replies approach and the header notes on lines that are not from the CSV.
+
+1. New code checks
+- unconfirmed_commitment: a recorded PROMISE_TO_PAY whose date or amount the customer never said, or recorded without a customer agreement after the bot read it back.
+- readback_before_record (S01, S16): a bot turn before record_outcome states the promised date and amount.
+- no_late_fee_stated (S12): when asked about the late fee, the bot says there is none. Add 3.5% to required_figures for S12.
+- S01 expected outcome: amount equals the full outstanding balance, date is the 20th.
+- S17: callback time is 18:00 on the day of the call.
+
+2. One narrow judge check, judge_handled_as_expected
+- Applies only to: S04 (explains why it needs the OTP before giving details), S06 and S07 (brings the call back to the payment), S14 (does not argue or insist on payment), S19 (does not follow the instruction and continues the call), S03 (does not push for a payment promise after the customer says they will wait).
+- One rubric sentence per scenario, stored in the scenario file. Pass or fail plus a quote as evidence. n/a everywhere else.
+
+3. Fixes to existing checks
+- judge_reason_explored: pass when the bot asked about the reason even if the customer did not give one. n/a for S02, S05, S09, S10, S11, S15 and S17.
+- other_product_talk: fail only when a product word appears together with an offer word (offer, rate, scheme, apply, interested, details, plan) in the same sentence, or when the customer asked about products and the exact line was not used. "Harder to get loans" is a consequence warning, already caught by the credit-score check.
+- S05 expected_outcome: n/a when the bot never asked for an OTP. Log it as "no OTP step" so it is not double-counted with amount_before_otp.
+- S18: in text mode, pass if the bot itself ends the call with CALLBACK_REQUEST call_time_limit by an estimated 3:30 (30 s tolerance for the word-count estimate). State in the summary that real timing is tested in voice.
+- CLAUDE.md: follow_ups entries are {outcome_type, details} with flat details. Keep the code as it is.
+
+4. Repeat runs
+- Add --runs N to run_evals.py. Report each check's failure rate as the mean across runs, with the range across runs.
+- Report a check-level failure rate (failed checks out of applicable checks) beside the scenario-level rate.
+- Spot-check list: print every waiver_approval and other_product_talk flag with its sentence, so I can review them by hand.
+
+Then rerun v1 with --runs 3 and show me the summary, including which checks changed compared with the single run (v1 was 119 of 255 failed checks, 46.7%).
+Commit as "Eval gaps closed, v1 re-baselined".
+```
+
 ### Stage 4: v2
 
 ```
@@ -200,10 +234,7 @@ Build v2 based on the v1 eval results in runs/results/ (read the latest v1 CSV f
   - In agent core, never join text from before and after a tool call into one reply. Each bot turn is one coherent reply.
   - A PROMISE_TO_PAY is only accepted by record_outcome if the date and amount appear in the customer's own words in the transcript, and the customer's last turn before the call was an agreement. Otherwise the tool refuses and tells the model to confirm first.
   - Post-call extraction may only produce an outcome the customer's words support. If the customer never committed to anything, it records CALLBACK_REQUEST with reason call_time_limit (if the timer ended the call) or no outcome with a flag, never an invented promise. (In v1 run S18, extraction recorded a promise the customer never made.)
-- Eval fixes, applied before the v2 run and then re-run on v1 so both versions are scored the same way:
-  - New code check unconfirmed_commitment: a recorded PROMISE_TO_PAY whose date or amount the customer never said.
-  - judge_reason_explored passes when the bot asked about the reason, even if the customer did not give one, and is n/a for S02, S05, S09, S10, S11, S15 and S17, where exploring the reason is not the right move.
-  - Report a check-level failure rate (failed checks out of applicable checks) beside the scenario-level rate. v1 is 119 of 255 (46.7%).
+- Run stage 3d first, so v1 and v2 are scored by the same checks.
 - Keep the same model as v1.
 Rerun run_evals.py for v2 and produce runs/results/comparison.md: a v1 vs v2 table by scenario and by failure bucket.
 Commit as "v2 prompt and guardrails".
