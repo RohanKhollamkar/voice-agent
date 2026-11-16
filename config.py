@@ -1,6 +1,7 @@
 """Settings loaded from the environment (.env). Import from here; never hard-code these in logic."""
 
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -41,6 +42,19 @@ SARVAM_STT_MODEL: str = _get_str("SARVAM_STT_MODEL", "saaras:v3-realtime")
 # transcribe | codemix | translit | verbatim | translate
 SARVAM_STT_MODE: str = _get_str("SARVAM_STT_MODE", "codemix")
 ELEVENLABS_MODEL: str = _get_str("ELEVENLABS_MODEL", "eleven_flash_v2_5")
+
+# Language model calls
+LLM_TIMEOUT_SECONDS: float = 8  # after this the bot falls back to BACKUP_MODEL
+EXTRACTION_TIMEOUT_SECONDS: float = 30  # post-call outcome extraction, not live
+
+# Bank rules (from the brief; the bot's figures come from here, never from the model)
+MONTHLY_INTEREST_RATE_PERCENT: float = 3.5
+LATE_FEE_RUPEES: int = 750
+LATE_FEE_BALANCE_THRESHOLD: int = 10_000  # late fee applies only above this balance
+
+# Where calls are recorded
+RUNS_DIR: Path = Path("runs")
+TIMEZONE: str = "Asia/Kolkata"
 
 # Behaviour
 ENFORCE_OTP: bool = _get_bool("ENFORCE_OTP", True)

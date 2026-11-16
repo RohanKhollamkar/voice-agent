@@ -47,7 +47,8 @@ async def check_model(client: AsyncOpenAI, model: str) -> None:
         return
     supported = getattr(listed[model], "supported_parameters", None) or []
     print(
-        f"  model ID found; accepts the reasoning setting: {'reasoning' in supported}"
+        f"  model ID found; accepts the reasoning setting: {'reasoning' in supported}; "
+        f"supports tool calling: {'tools' in supported}"
     )
 
 

@@ -6,5 +6,8 @@
 # Silero VAD and python-dotenv ship with the pipecat-ai core package.
 pipecat-ai[sarvam,elevenlabs,openrouter,local]>=1.16,<2
 
+# Outcome webhook POST
+httpx
+
 # Dev
 ruff
