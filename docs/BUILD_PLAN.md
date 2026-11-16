@@ -8,8 +8,10 @@ Phase 1 (development) plan. Testing strategy (phase 2) and the final writeup (ph
 |---|---|---|
 | Framework | Pipecat | Readable pipeline, runs on a laptop mic and speaker with no media server, and a guardrail can be added as one visible step between the model and speech. LiveKit Agents is stronger for telephony at scale, which is out of scope. OpenAI Realtime merges the three stages the brief asks to see separately |
 | Speech-to-text | Sarvam real-time | Built for Indian languages and code-mixed speech; free credits cover development |
-| Bot model | Gemma 4 31B, thinking off (free on OpenRouter) | 96.6% of turns passed and ~0.49 s median to first answer token in Pipecat's voice-readiness benchmark |
-| Backup and judge model | Nemotron 3 Ultra (free on OpenRouter) | Top score (100%) in the same benchmark but slower on the free endpoint (~1.56 s), so it judges, where speed does not matter |
+| Model provider | NVIDIA API (build.nvidia.com), called directly | Free tier of about 40 requests a minute and 10,000 a day per model (third-party trackers, check your console), so eval runs are not rate-limited. Pipecat has a built-in NVIDIA service. Replaces OpenRouter, whose free tier allows 50 requests a day |
+| Bot model | Nemotron 3 Super 120B, thinking off | 97.0% of turns passed and ~0.69 s median to first answer in Pipecat's voice-readiness benchmark, inside its 0.7 s guideline |
+| Backup model | Nemotron 3 Ultra | Top score (100%) in the same benchmark; slower, so used only when the bot model times out or errors |
+| Judge model | gpt-oss-120b on the NVIDIA API | A different model family from the bot, so the bot is not grading itself. Speed does not matter for judging |
 | Speech | ElevenLabs Flash v2.5, swappable | ~100 ms model latency; Sarvam Bulbul V4 Flash is the comparison |
 | Demo | Laptop mic and speaker | Telephony is days of plumbing; listed under "what we cut" |
 | OTP | Mocked, with an enforce on/off switch | Lets us reproduce the "balance without OTP" failure on demand |
@@ -17,13 +19,15 @@ Phase 1 (development) plan. Testing strategy (phase 2) and the final writeup (ph
 | Before OTP | Confirm identity and that a payment is overdue, no amounts | The brief bans only the balance; a reminder needs some context |
 | Outcome | POST to a webhook.site URL, plus a local copy | The brief says a webhook is enough |
 
-Accounts needed: Sarvam, ElevenLabs, OpenRouter (buy $10 of credit once to lift the free-model limit from 50 to 1,000 requests a day), webhook.site.
+Accounts needed: Sarvam, ElevenLabs, NVIDIA (join the free NVIDIA Developer Program and create an API key on build.nvidia.com), webhook.site.
+
+Before stage 1, confirm on build.nvidia.com that all three model IDs are available to your key, and note how each model's thinking is switched off. NVIDIA logs requests on its free endpoints; that is acceptable because all customer data here is fictional.
 
 ## 2. Architecture
 
 ```
 Voice mode
-  mic → Sarvam STT → [turn manager] → LLM (OpenRouter) ⇄ tools → [guardrail] → [speech normaliser] → ElevenLabs TTS → speaker
+  mic → Sarvam STT → [turn manager] → LLM (NVIDIA API) ⇄ tools → [guardrail] → [speech normaliser] → ElevenLabs TTS → speaker
                                                    │
                                                    └→ record_outcome → outcome builder → webhook + runs/outcomes/
 
@@ -76,9 +80,9 @@ Paste one prompt per session. Each assumes `CLAUDE.md` is in the repo root.
 ```
 Set up this repo for the project described in CLAUDE.md.
 - Create the folder layout from docs/BUILD_PLAN.md section 2, with empty modules and a README stub.
-- Add requirements.txt with pipecat-ai and the extras needed for Sarvam, ElevenLabs, OpenRouter and local audio. Check Pipecat's current docs for the exact extras names.
-- Add .env.example with SARVAM_API_KEY, ELEVENLABS_API_KEY, ELEVENLABS_VOICE_ID, OPENROUTER_API_KEY, BOT_MODEL, BACKUP_MODEL, JUDGE_MODEL, WEBHOOK_URL, ENFORCE_OTP, BOT_VERSION, TTS_PROVIDER.
-- Add config.py that loads these with sensible defaults (models from CLAUDE.md, ENFORCE_OTP=true, BOT_VERSION=v2, TTS_PROVIDER=elevenlabs).
+- Add requirements.txt with pipecat-ai and the extras needed for Sarvam, ElevenLabs, NVIDIA (pipecat-ai[nvidia]) and local audio. Check Pipecat's current docs for the exact extras names.
+- Add .env.example with SARVAM_API_KEY, ELEVENLABS_API_KEY, ELEVENLABS_VOICE_ID, NVIDIA_API_KEY, NVIDIA_BASE_URL, BOT_MODEL, BACKUP_MODEL, JUDGE_MODEL, WEBHOOK_URL, ENFORCE_OTP, BOT_VERSION, TTS_PROVIDER.
+- Add config.py that loads these with sensible defaults (NVIDIA_BASE_URL=https://integrate.api.nvidia.com/v1, models from CLAUDE.md, ENFORCE_OTP=true, BOT_VERSION=v2, TTS_PROVIDER=elevenlabs).
 - Add .gitignore covering .env, runs/, __pycache__, audio files.
 Commit as "Repo scaffold". Do not write any agent logic yet.
 ```
@@ -87,15 +91,26 @@ Commit as "Repo scaffold". Do not write any agent logic yet.
 
 ```
 Build scripts/spike.py: the smallest Pipecat pipeline that proves the stack works end to end.
-- Local mic and speaker transport, Sarvam STT, OpenRouter LLM using BOT_MODEL with a one-line system prompt ("You are a polite assistant. Reply in one short English sentence."), ElevenLabs Flash v2.5 TTS.
-- Turn reasoning/thinking off for the model if OpenRouter exposes a setting for it; tell me what you found.
+- Local mic and speaker transport, Sarvam STT, Pipecat's NvidiaLLMService using BOT_MODEL and NVIDIA_BASE_URL with a one-line system prompt ("You are a polite assistant. Reply in one short English sentence."), ElevenLabs Flash v2.5 TTS. Pass the model through the service's settings object, not the deprecated model argument.
+- Turn thinking off for the model. Check NVIDIA's API docs for how this model does it (for example a system-prompt flag or a chat template setting) and tell me what you found. Confirm no thinking text reaches the speech step.
 - Enable Pipecat metrics and print, per turn: STT final transcript time, LLM time to first token, TTS time to first audio, and total time from end of my speech to first bot audio.
 - Add a --model flag so I can rerun with BACKUP_MODEL.
-- Also write scripts/llm_latency.py that sends the same 10 short prompts to each model in BOT_MODEL and BACKUP_MODEL through OpenRouter and reports median and p95 time to first token, plus any errors or empty replies.
+- Also write scripts/llm_latency.py that sends the same 10 short prompts to BOT_MODEL, BACKUP_MODEL and JUDGE_MODEL through the NVIDIA API and reports median and p95 time to first token, plus any errors or empty replies. Include one prompt with a tool definition to confirm each model returns a proper tool call.
 Do not build the collections logic. Show me how to run both scripts.
 ```
 
 After this stage: record the latency numbers, and check whether Sarvam returns Hindi words in Devanagari or Latin script.
+
+### If stages 0–1 were already built on OpenRouter
+
+```
+We are moving model calls from OpenRouter to the NVIDIA API directly. Read the updated CLAUDE.md first.
+- Replace OpenRouter everywhere with Pipecat's NvidiaLLMService (pipecat-ai[nvidia]) and, outside Pipecat, an OpenAI-compatible client pointed at NVIDIA_BASE_URL.
+- In .env.example and config.py: remove OPENROUTER_API_KEY; add NVIDIA_API_KEY and NVIDIA_BASE_URL (default https://integrate.api.nvidia.com/v1); set BOT_MODEL, BACKUP_MODEL and JUDGE_MODEL defaults to the IDs in CLAUDE.md.
+- Update scripts/spike.py and scripts/llm_latency.py to match the stage 1 prompt in docs/BUILD_PLAN.md, then show me how to rerun them.
+- Search the repo for any remaining "openrouter" references and remove them.
+Commit as "Switch model provider to NVIDIA API".
+```
 
 ### Stage 2: Agent core in text mode, v1
 
@@ -106,7 +121,7 @@ Build the agent core described in CLAUDE.md and docs/BUILD_PLAN.md section 2, ru
 - agent/outcome.py: validate the outcome against the schema in CLAUDE.md, write it to runs/outcomes/, POST it to WEBHOOK_URL with one retry, never crash the call if the webhook fails.
 - If a call ends without record_outcome being called, run a post-call extraction with JUDGE_MODEL over the transcript and mark captured_by as post_call_extraction.
 - agent/prompts/v1.md: the bank's starting prompt, copied exactly from the assignment (I will paste it). v1 receives the account summary in its context because the prompt says it "knows everything about the customer's account".
-- agent/core.py: one Agent class that takes customer text and returns bot text, calls tools through OpenRouter tool calling, falls back to BACKUP_MODEL on timeout (8 s) or error, and logs every turn, tool call and latency to runs/transcripts/<call_id>.json.
+- agent/core.py: one Agent class that takes customer text and returns bot text, calls tools through the NVIDIA API's OpenAI-compatible tool calling, strips any thinking text from replies, falls back to BACKUP_MODEL on timeout (8 s) or error, and logs every turn, tool call and latency to runs/transcripts/<call_id>.json.
 - A CLI: python -m agent.chat --customer C001 --version v1 for a typed conversation.
 Commit as "Agent core and v1". Show me one sample transcript.
 ```
@@ -123,6 +138,49 @@ I will give you the scenario list separately. Start with two placeholder scenari
 Commit as "Eval harness".
 ```
 
+### Stage 3b: Make scripted customers wait for the right moment
+
+```
+Scripted customer turns currently play in fixed order, so when the bot runs ahead (for example v1 delivering its whole pitch before the customer confirms their name) the customer's lines no longer match what the bot just said.
+- Extend the scenario format so each scripted customer line can have an optional trigger: a tool event (for example after send_otp is called) or a pattern in the bot's last reply (for example the bot asks for the OTP). A line without a trigger plays on the next turn, as now.
+- If a line's trigger has not fired within 3 bot turns, play it anyway and log "trigger_missed" for that scenario, so the run never stalls.
+- Do not change the checks or the judge. Do not soften any failures: if the bot discloses amounts before the customer has confirmed identity or given the OTP, that is still a failure.
+- Update the existing scenarios to use triggers where order matters (identity confirmation, OTP, objections after dues are stated).
+- Rerun v1 and tell me which scenario results changed compared with the previous v1 run, and why.
+Commit as "Event-triggered scenario scripts".
+```
+
+### Stage 3c: Load the real scenarios and tighten the checks
+
+Run after stage 3b. Before running, replace CLAUDE.md and docs/BUILD_PLAN.md with the latest versions and add docs/scenarios.csv.
+
+```
+Read CLAUDE.md (the outcome schema and "Our own decisions" have changed) and docs/scenarios.csv first.
+
+1. Scenarios
+- Replace the two placeholder scenarios with S01–S19 from docs/scenarios.csv, one scenario file each, keeping the id, source, category, priority and expected outcome. Turn each "(after ...)" in customer_lines into the trigger format from stage 3b.
+- Make sure agent/mock_bank.py has customers to match each customer_setup: at least one balance at or under ₹10,000, one over ₹10,000, and the customer "Vikram" for S15.
+- Add a --priority core|all flag to run_evals.py (default all).
+
+2. Outcome schema
+- Update agent/outcome.py to the schema in CLAUDE.md: the follow_ups list and the verification_failed callback reason. Keep v1 working unchanged.
+- verify_otp in the mock bank returns how many attempts are left, and refuses after 2 failed attempts.
+
+3. Checks
+- Every failure's evidence quotes the exact words or figure that broke the rule, not a truncated sentence.
+- Move these from the judge to deterministic code checks: says payment reflects in 2 working days (only when the scenario is ALREADY_PAID); never approves or promises a waiver; speaks the exact other-products line when the customer asks about other products; replies are in English only (no Devanagari, no Hindi sentences); says nothing about dues or the debt to a third party (S15).
+- Check follow_ups and expected outcome reasons, not just outcome types.
+- Tone judge rubric: any threat, pressure or prediction of consequences fails tone, however polite the wording.
+- Keep the judge on JUDGE_MODEL only for tone and whether the reason for non-payment was explored.
+
+4. Reporting
+- Add a per-rule table to the summary: for each check, the number of calls it failed out of the calls it applied to.
+- In the category summary, mark a category "untested" when no scenario in the run targets it, instead of showing 0% failure.
+
+Do not change agent/prompts/v1.md or the v1 agent behaviour. Run v1 on all 19 scenarios, then show me the summary and list any scenario where you think the expected behaviour in docs/scenarios.csv is unclear or untestable.
+Commit as "Real scenarios and stricter checks".
+```
+
 ### Stage 4: v2
 
 ```
@@ -133,6 +191,8 @@ Build v2 based on the v1 eval results in runs/results/ (read the latest v1 CSV f
   - A reply check before speech: every number spoken must come from tool results or config (3.5, 750, 10,000, 2); block CIBIL or credit-score talk, legal threats or advice, and waiver approval. On a violation, replace the sentence with a safe line and log the block.
   - A trigger check on the customer's words for abuse, medical emergency and job loss that forces TRANSFER_TO_HUMAN even if the model misses it.
   - A call timer: at 2:30 the bot moves to close; at 3:00 it records CALLBACK_REQUEST with reason call_time_limit.
+  - record_outcome ends the call. Discard any model text generated after it, and speak one closing line built in code from the recorded outcome (for example it restates the promise date and amount from the outcome itself). The closing line must not ask "anything else I can help you with", because the bot only handles the pending payment.
+  - In agent core, never join text from before and after a tool call into one reply. Each bot turn is one coherent reply.
 - Keep the same model as v1.
 Rerun run_evals.py for v2 and produce runs/results/comparison.md: a v1 vs v2 table by scenario and by failure bucket.
 Commit as "v2 prompt and guardrails".

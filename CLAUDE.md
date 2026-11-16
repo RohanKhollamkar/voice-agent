@@ -27,6 +27,10 @@ The reviewers will read the code and ask us to walk through it. Prefer small, re
 - OTP is mocked. `ENFORCE_OTP=false` disables the code-level gate so the "balance without OTP" failure can be reproduced on demand.
 - The bot says it is an automated assistant calling from Mumbai Bank in its first line.
 - Figures (rate, fee, balance, minimum due) come from tools or config, never from the model's memory.
+- Two failed OTP attempts end the call: no account details, outcome `CALLBACK_REQUEST` with reason `verification_failed`.
+- If someone other than the customer answers, the bot says nothing about the debt or dues and asks for a good time to call back: `CALLBACK_REQUEST` with reason `wrong_party`.
+- If the customer asks for a waiver and also promises to pay, the outcome is `PROMISE_TO_PAY` and the waiver goes in `follow_ups` as a `CALLBACK_REQUEST` with reason `waiver_request`.
+- The test scenarios are listed in `docs/scenarios.csv` (S01–S19).
 
 ## Locked stack
 
@@ -34,9 +38,10 @@ The reviewers will read the code and ask us to walk through it. Prefer small, re
 |---|---|---|
 | Framework | Pipecat (Python) | Local mic and speaker transport for the demo; no telephony |
 | Speech-to-text | Sarvam, real-time | Hinglish input |
-| Language model (bot) | `google/gemma-4-31b-it:free` on OpenRouter, thinking off | Verify the model ID on OpenRouter before use |
-| Backup bot model | `nvidia/nemotron-3-ultra-550b-a55b:free` | Used on timeout or error |
-| Judge model (evals) | `nvidia/nemotron-3-ultra-550b-a55b:free` | Different family from the bot on purpose |
+| Model provider | NVIDIA API (build.nvidia.com), called directly | Pipecat `NvidiaLLMService`; base URL `https://integrate.api.nvidia.com/v1`; key in `NVIDIA_API_KEY`. No OpenRouter |
+| Language model (bot) | `nvidia/nemotron-3-super-120b-a12b`, thinking off | Verify the model ID and how to turn thinking off on build.nvidia.com before use |
+| Backup bot model | `nvidia/nemotron-3-ultra-550b-a55b` | Used on timeout or error. Verify it is on the NVIDIA API; otherwise use another hosted model there |
+| Judge model (evals) | `openai/gpt-oss-120b` on the NVIDIA API | Different family from the bot on purpose. Verify availability; any strong non-Nemotron model on the NVIDIA API works |
 | Speech | ElevenLabs Flash v2.5 | Behind a swappable interface; Sarvam Bulbul V4 Flash is the alternative |
 | Outcome sink | HTTP POST to `WEBHOOK_URL` (webhook.site) | Also written to `runs/outcomes/` |
 
@@ -59,16 +64,19 @@ Every call produces exactly one outcome:
   "details": {
     "PROMISE_TO_PAY": {"date": "YYYY-MM-DD", "amount": 4500},
     "ALREADY_PAID": {"date": "YYYY-MM-DD", "mode": "UPI | net banking | card | cash | other"},
-    "CALLBACK_REQUEST": {"time": "ISO-8601", "reason": "busy | waiver_request | wrong_party | call_time_limit"},
+    "CALLBACK_REQUEST": {"time": "ISO-8601 or null", "reason": "busy | waiver_request | wrong_party | call_time_limit | verification_failed"},
     "DISPUTE": {"reason": "free text"},
     "TRANSFER_TO_HUMAN": {"reason": "abusive | medical_emergency | job_loss | customer_request"}
   },
+  "follow_ups": [
+    {"outcome_type": "CALLBACK_REQUEST", "details": {"time": null, "reason": "waiver_request"}}
+  ],
   "captured_by": "tool_call | post_call_extraction",
   "transcript_path": "runs/transcripts/<call_id>.json"
 }
 ```
 
-`details` holds only the key that matches `outcome_type`.
+`details` holds only the key that matches `outcome_type`. `follow_ups` is optional and usually empty; each entry is a secondary outcome a human must act on, in the same shape as the main one.
 
 ## Conventions
 

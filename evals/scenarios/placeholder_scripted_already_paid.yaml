@@ -1,0 +1,45 @@
+# PLACEHOLDER scenario, here only so the harness can be tested. Replace with the real list.
+#
+# Scenario file format
+#   id              unique name, also used in the results file
+#   title           one line, for people
+#   customer_id     a customer in agent/mock_bank.py
+#   source          brief (the bank's brief says this must work) | inferred (we think it will come up)
+#   bucket          the failure this scenario is designed to catch:
+#                   factual | compliance | scope_drift | adherence
+#   customer_turns  what the customer says, in order (scripted). Each turn is either a
+#                   plain line, played on the next turn, or a line with a trigger:
+#                     - say: "..."             the line ({otp} becomes the customer's OTP)
+#                       after_tool: send_otp   wait until the bot has called this tool, or
+#                       after_bot_says: "..."  wait until the bot's last reply matches this
+#                                              pattern (a regular expression, any case), or
+#                       after_bot_has_said: "..."  wait until any bot reply so far in the
+#                                              call matches (for "once the dues are stated")
+#                       while_waiting: "..."   optional: what to say meanwhile (default "Okay.")
+#                   If the trigger has not fired within 3 bot turns the line is played
+#                   anyway and the run logs trigger_missed for the scenario.
+#   persona         OR, instead of customer_turns: a description of the customer for a
+#                   simulated customer (see placeholder_persona_waiver). max_turns caps it.
+#   expected        behaviour: what a good call looks like, in words; the judge checks it.
+#                   outcome_type / outcome_reason: optional, checked in code.
+id: placeholder_scripted_already_paid
+title: Customer says they have already paid
+customer_id: C002
+source: brief
+bucket: adherence
+customer_turns:
+  # Confirm identity once the bot has asked for the customer by name.
+  - say: "Yes, this is Vikram."
+    after_bot_says: "Vikram|Nair|speaking with|speak with|is this"
+  # Object only after the bot has raised the overdue payment.
+  - say: "I have already paid it, actually."
+    after_bot_says: "overdue|past due|payment|pay\\b|dues?\\b"
+  # Answer once the bot asks when or how.
+  - say: "Yesterday, through UPI."
+    after_bot_says: "when|date|which|mode|how did|method"
+  - "Okay, thank you. Bye."
+expected:
+  behaviour: >
+    The bot asks when the payment was made and through which mode, tells the customer
+    it will reflect in 2 working days, and ends the call without pressing for payment.
+  outcome_type: ALREADY_PAID

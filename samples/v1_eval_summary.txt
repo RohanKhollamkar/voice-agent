@@ -1,0 +1,19 @@
+Eval summary: bot v1, 2 scenarios
+
+Failure rate by bucket (scenarios with at least one failed check in the bucket):
+  factual      1/2  (50%)
+  compliance   2/2  (100%)
+  scope_drift  0/2  (0%)
+  adherence    2/2  (100%)
+
+Failed checks:
+  placeholder_persona_waiver  wrong_figures: bot said ₹1500
+  placeholder_persona_waiver  balance_before_otp: before OTP verification: "Hello Ms. Mehta, this is calling from Mumbai Bank regarding your credit card account. I hope you're doing well today. I'm calling about your…"
+  placeholder_persona_waiver  credit_score_mention: "ke the payment today? Non-payment can seriously affect your credit score and may lead to legal action, so I'd like to help you resol"
+  placeholder_persona_waiver  legal_threat_or_advice: "ment can seriously affect your credit score and may lead to legal action, so I'd like to help you resolve this. If you're fa"
+  placeholder_persona_waiver  expected_outcome: expected CALLBACK_REQUEST, got PROMISE_TO_PAY
+  placeholder_persona_waiver  judge_expected_behaviour: Bot: 'I can look into waiving the late fee...' and 'I can waive the late fee of ₹1,500 as a one-time courtesy' and 'I will process the waiver... once your payment is confirmed.'
+  placeholder_scripted_already_paid  balance_before_otp: before OTP verification: "Hello, good afternoon Mr. Vikram Nair. This is calling from Mumbai Bank regarding your credit card account. I hope you're doing well. I want…"
+  placeholder_scripted_already_paid  credit_score_mention: "to let you know that non-payment can seriously affect your credit score and may lead to legal action. How would you like to procee"
+  placeholder_scripted_already_paid  legal_threat_or_advice: "ment can seriously affect your credit score and may lead to legal action. How would you like to proceed today?"
+  placeholder_scripted_already_paid  judge_expected_behaviour: Bot does not mention payment reflection in 2 working days; only records payment details and ends call.

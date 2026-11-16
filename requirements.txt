@@ -1,10 +1,16 @@
 # Extras verified against pipecat-ai 1.16.0 on PyPI:
 #   sarvam      Sarvam speech-to-text (and Bulbul speech as the alternative TTS)
 #   elevenlabs  ElevenLabs speech
-#   openrouter  OpenRouter language model service
+#   nvidia      NVIDIA API language model service
 #   local       local mic and speaker transport (PyAudio; needs the PortAudio system library)
 # Silero VAD and python-dotenv ship with the pipecat-ai core package.
-pipecat-ai[sarvam,elevenlabs,openrouter,local]>=1.16,<2
+pipecat-ai[sarvam,elevenlabs,nvidia,local]>=1.16,<2
+
+# Outcome webhook POST
+httpx
+
+# Eval scenario files
+pyyaml
 
 # Dev
 ruff
