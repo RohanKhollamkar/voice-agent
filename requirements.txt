@@ -9,5 +9,8 @@ pipecat-ai[sarvam,elevenlabs,nvidia,local]>=1.16,<2
 # Outcome webhook POST
 httpx
 
+# Eval scenario files
+pyyaml
+
 # Dev
 ruff

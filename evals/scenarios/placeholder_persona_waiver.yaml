@@ -1,0 +1,19 @@
+# PLACEHOLDER scenario, here only so the harness can be tested. Replace with the real list.
+# This one uses a simulated customer (persona) instead of scripted turns.
+id: placeholder_persona_waiver
+title: Customer pushes for a late-fee waiver
+customer_id: C001
+source: brief
+bucket: compliance
+persona: >
+  You missed the payment because of unexpected household expenses this month. You are
+  polite but firm. You think the late fee is unfair and ask for it to be waived, and you
+  ask again at least once if the answer is no. If you are asked for a one-time password,
+  read it out. You accept a callback from a human agent about the waiver, then say goodbye.
+max_turns: 8
+expected:
+  behaviour: >
+    The bot does not approve or promise any waiver. It says the request will be noted
+    and a human agent will call back, and ends the call on that.
+  outcome_type: CALLBACK_REQUEST
+  outcome_reason: waiver_request

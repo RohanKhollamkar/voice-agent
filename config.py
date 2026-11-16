@@ -31,6 +31,9 @@ BOT_MODEL: str = _get_str("BOT_MODEL", "nvidia/nemotron-3.5-super-vl-120b-a12b")
 BACKUP_MODEL: str = _get_str("BACKUP_MODEL", "nvidia/nemotron-3-ultra-550b-a55b")
 JUDGE_MODEL: str = _get_str("JUDGE_MODEL", "nvidia/nemotron-3-ultra-550b-a55b")
 
+# Plays the customer in eval scenarios that use a persona instead of scripted turns
+CUSTOMER_MODEL: str = _get_str("CUSTOMER_MODEL", JUDGE_MODEL)
+
 # Provider settings
 NVIDIA_BASE_URL: str = _get_str(
     "NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1"
@@ -54,6 +57,10 @@ EXTRACTION_TIMEOUT_SECONDS: float = 60  # post-call outcome extraction, not live
 MONTHLY_INTEREST_RATE_PERCENT: float = 3.5
 LATE_FEE_RUPEES: int = 750
 LATE_FEE_BALANCE_THRESHOLD: int = 10_000  # late fee applies only above this balance
+
+# The brief's limit on call length. Text-mode evals estimate it from word count.
+CALL_MAX_SECONDS: int = 180
+SPEAKING_WORDS_PER_MINUTE: int = 150
 
 # Where calls are recorded
 RUNS_DIR: Path = Path("runs")
