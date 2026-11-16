@@ -78,7 +78,7 @@ Every call produces exactly one outcome:
 }
 ```
 
-`details` holds only the key that matches `outcome_type`. `follow_ups` is optional and usually empty; each entry is a secondary outcome a human must act on, in the same shape as the main one.
+`details` holds only the key that matches `outcome_type`. `follow_ups` is optional and usually empty; each entry is a secondary outcome a human must act on, as `{outcome_type, details}` with the details fields directly inside (not keyed by type), as in the example above.
 
 ## Conventions
 
