@@ -11,7 +11,7 @@ Phase 1 (development) plan. Testing strategy (phase 2) and the final writeup (ph
 | Model provider | NVIDIA API (build.nvidia.com), called directly | Free tier of about 40 requests a minute and 10,000 a day per model (third-party trackers, check your console), so eval runs are not rate-limited. Pipecat has a built-in NVIDIA service. Replaces OpenRouter, whose free tier allows 50 requests a day |
 | Bot model | Nemotron 3 Super 120B, thinking off | 97.0% of turns passed and ~0.69 s median to first answer in Pipecat's voice-readiness benchmark, inside its 0.7 s guideline |
 | Backup model | Nemotron 3 Ultra | Top score (100%) in the same benchmark; slower, so used only when the bot model times out or errors |
-| Judge model | gpt-oss-120b on the NVIDIA API | A different model family from the bot, so the bot is not grading itself. Speed does not matter for judging |
+| Judge model | Nemotron 3 Ultra | A larger model than the bot. A different family was the first choice, but gpt-oss-120b was retired on the NVIDIA API and the other non-Nemotron models there failed or timed out too often |
 | Speech | ElevenLabs Flash v2.5, swappable | ~100 ms model latency; Sarvam Bulbul V4 Flash is the comparison |
 | Demo | Laptop mic and speaker | Telephony is days of plumbing; listed under "what we cut" |
 | OTP | Mocked, with an enforce on/off switch | Lets us reproduce the "balance without OTP" failure on demand |

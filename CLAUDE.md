@@ -37,7 +37,7 @@ The reviewers will read the code and ask us to walk through it. Prefer small, re
 | Model provider | NVIDIA API (build.nvidia.com), called directly | Pipecat `NvidiaLLMService`; base URL `https://integrate.api.nvidia.com/v1`; key in `NVIDIA_API_KEY`. No OpenRouter |
 | Language model (bot) | `nvidia/nemotron-3.5-super-vl-120b-a12b`, thinking off | Replaces `nvidia/nemotron-3-super-120b-a12b`, which NVIDIA retired on 2026-10-03. Thinking is turned off with `chat_template_kwargs: {"enable_thinking": false}` |
 | Backup bot model | `nvidia/nemotron-3-ultra-550b-a55b` | Used on timeout or error. Verify it is on the NVIDIA API; otherwise use another hosted model there |
-| Judge model (evals) | `minimaxai/minimax-m3.1-flash` on the NVIDIA API | Different family from the bot on purpose. Replaces `openai/gpt-oss-120b`, which NVIDIA retired on 2026-09-03 |
+| Judge model (evals) | `nvidia/nemotron-3-ultra-550b-a55b` | Same family as the bot but a larger model. The non-Nemotron models on the NVIDIA API were retired (`openai/gpt-oss-120b`) or too unreliable to judge with |
 | Speech | ElevenLabs Flash v2.5 | Behind a swappable interface; Sarvam Bulbul V4 Flash is the alternative |
 | Outcome sink | HTTP POST to `WEBHOOK_URL` (webhook.site) | Also written to `runs/outcomes/` |
 

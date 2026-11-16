@@ -29,7 +29,7 @@ WEBHOOK_URL: str = _get_str("WEBHOOK_URL")
 # Models (NVIDIA API IDs)
 BOT_MODEL: str = _get_str("BOT_MODEL", "nvidia/nemotron-3.5-super-vl-120b-a12b")
 BACKUP_MODEL: str = _get_str("BACKUP_MODEL", "nvidia/nemotron-3-ultra-550b-a55b")
-JUDGE_MODEL: str = _get_str("JUDGE_MODEL", "minimaxai/minimax-m3.1-flash")
+JUDGE_MODEL: str = _get_str("JUDGE_MODEL", "nvidia/nemotron-3-ultra-550b-a55b")
 
 # Provider settings
 NVIDIA_BASE_URL: str = _get_str(
