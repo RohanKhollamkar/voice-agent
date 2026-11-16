@@ -23,7 +23,6 @@ def _get_str(name: str, default: str = "") -> str:
 # Secrets and endpoints (no defaults)
 SARVAM_API_KEY: str = _get_str("SARVAM_API_KEY")
 ELEVENLABS_API_KEY: str = _get_str("ELEVENLABS_API_KEY")
-ELEVENLABS_VOICE_ID: str = _get_str("ELEVENLABS_VOICE_ID")
 OPENROUTER_API_KEY: str = _get_str("OPENROUTER_API_KEY")
 WEBHOOK_URL: str = _get_str("WEBHOOK_URL")
 
@@ -42,6 +41,9 @@ SARVAM_STT_MODEL: str = _get_str("SARVAM_STT_MODEL", "saaras:v3-realtime")
 # transcribe | codemix | translit | verbatim | translate
 SARVAM_STT_MODE: str = _get_str("SARVAM_STT_MODE", "codemix")
 ELEVENLABS_MODEL: str = _get_str("ELEVENLABS_MODEL", "eleven_flash_v2_5")
+# Default is "Sarah", an ElevenLabs premade voice. Premade voices work on the free
+# plan; voices from the ElevenLabs library need a paid plan to use over the API.
+ELEVENLABS_VOICE_ID: str = _get_str("ELEVENLABS_VOICE_ID", "EXAVITQu4vr4xnSDxMaL")
 
 # Language model calls
 LLM_TIMEOUT_SECONDS: float = 8  # after this the bot falls back to BACKUP_MODEL
