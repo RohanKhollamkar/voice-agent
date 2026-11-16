@@ -9,9 +9,9 @@ Phase 1 (development) plan. Testing strategy (phase 2) and the final writeup (ph
 | Framework | Pipecat | Readable pipeline, runs on a laptop mic and speaker with no media server, and a guardrail can be added as one visible step between the model and speech. LiveKit Agents is stronger for telephony at scale, which is out of scope. OpenAI Realtime merges the three stages the brief asks to see separately |
 | Speech-to-text | Sarvam real-time | Built for Indian languages and code-mixed speech; free credits cover development |
 | Model provider | NVIDIA API (build.nvidia.com), called directly | Free tier of about 40 requests a minute and 10,000 a day per model (third-party trackers, check your console), so eval runs are not rate-limited. Pipecat has a built-in NVIDIA service. Replaces OpenRouter, whose free tier allows 50 requests a day |
-| Bot model | Nemotron 3 Super 120B, thinking off | 97.0% of turns passed and ~0.69 s median to first answer in Pipecat's voice-readiness benchmark, inside its 0.7 s guideline |
+| Bot model | Nemotron 3.5 Super VL 120B, thinking off | Nemotron 3 Super (97.0% of turns passed, ~0.69 s in Pipecat's voice-readiness benchmark) was retired on the NVIDIA API on 16 Nov; 3.5 Super is its successor and Pipecat's default NVIDIA model. Not benchmarked by Pipecat, so stage 1 latency numbers are the evidence |
 | Backup model | Nemotron 3 Ultra | Top score (100%) in the same benchmark; slower, so used only when the bot model times out or errors |
-| Judge model | gpt-oss-120b on the NVIDIA API | A different model family from the bot, so the bot is not grading itself. Speed does not matter for judging |
+| Judge model | Nemotron 3 Ultra (for now) | gpt-oss-120b returned "end of life" on the NVIDIA API. Ultra works but is the same family as the bot, so a non-Nemotron judge is preferred once one is confirmed. Exact IDs live in config.py |
 | Speech | ElevenLabs Flash v2.5, swappable | ~100 ms model latency; Sarvam Bulbul V4 Flash is the comparison |
 | Demo | Laptop mic and speaker | Telephony is days of plumbing; listed under "what we cut" |
 | OTP | Mocked, with an enforce on/off switch | Lets us reproduce the "balance without OTP" failure on demand |
@@ -156,6 +156,10 @@ Run after stage 3b. Before running, replace CLAUDE.md and docs/BUILD_PLAN.md wit
 
 ```
 Read CLAUDE.md (the outcome schema and "Our own decisions" have changed) and docs/scenarios.csv first.
+
+0. Judge model
+- List the models available on the NVIDIA API (GET {NVIDIA_BASE_URL}/models). Pick up to two strong instruction-following models that are not Nemotron (for example from the Llama, Qwen, Mistral or DeepSeek families) and confirm each answers a short test prompt without an "end of life" error.
+- Re-judge 3 existing v1 transcripts with each candidate and with the current judge, and show me where they disagree. Do not change JUDGE_MODEL until I choose.
 
 1. Scenarios
 - Replace the two placeholder scenarios with S01–S19 from docs/scenarios.csv, one scenario file each, keeping the id, source, category, priority and expected outcome. Turn each "(after ...)" in customer_lines into the trigger format from stage 3b.
