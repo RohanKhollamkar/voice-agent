@@ -19,7 +19,9 @@ async def main(customer_id: str, version: str) -> None:
     agent = Agent(customer_id, version)
     customer = mock_bank.get_customer(customer_id)
     print(f"Calling {customer['name']} ({customer_id}) with bot {version}.")
-    print(f"Mock OTP for this customer: {customer['otp']}. Type /end to hang up.\n")
+    if version != "v1":  # v1 has no OTP step
+        print(f"Mock OTP for this customer: {customer['otp']}.")
+    print("Type /end to hang up.\n")
 
     print(f"Bot: {await agent.start()}")
     while not agent.ended:

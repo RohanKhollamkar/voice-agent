@@ -24,7 +24,7 @@ from agent.outcome import (
     save_outcome,
     validate_outcome,
 )
-from agent.tools import TOOL_SCHEMAS, CallState, run_tool
+from agent.tools import CallState, run_tool, tool_schemas
 
 PROMPTS_DIR = Path(__file__).parent / "prompts"
 
@@ -159,7 +159,7 @@ class Agent:
                 response = await self.client.chat.completions.create(
                     model=model,
                     messages=self.messages,
-                    tools=TOOL_SCHEMAS,
+                    tools=tool_schemas(self.state.bot_version),
                     timeout=config.LLM_TIMEOUT_SECONDS,
                     extra_body=config.LLM_EXTRA_BODY,
                 )

@@ -100,9 +100,24 @@ TOOLS = {
 }
 
 
+# Which tools each bot version is given. v1 is the bank's prompt as written: it
+# never mentions an OTP and "knows everything about the customer's account", so
+# it gets no OTP or account tools, only the one that records the outcome.
+TOOLS_BY_VERSION = {
+    "v1": ("record_outcome",),
+    "v2": ("send_otp", "verify_otp", "get_account_summary", "record_outcome"),
+}
+
+
+def tool_schemas(version: str) -> list[dict]:
+    """The tool definitions sent to the model for this bot version."""
+    allowed = TOOLS_BY_VERSION[version]
+    return [schema for schema in TOOL_SCHEMAS if schema["function"]["name"] in allowed]
+
+
 def run_tool(state: CallState, name: str, arguments: dict) -> dict:
     """Run one tool call from the model. Bad calls come back as an error, not a crash."""
-    if name not in TOOLS:
+    if name not in TOOLS_BY_VERSION[state.bot_version]:
         return {"error": f"Unknown tool '{name}'."}
     try:
         return TOOLS[name](state, **arguments)
