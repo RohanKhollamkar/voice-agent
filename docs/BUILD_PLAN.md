@@ -189,7 +189,8 @@ Commit as "Real scenarios and stricter checks".
 
 ```
 Build v2 based on the v1 eval results in runs/results/ (read the latest v1 CSV first and summarise the failures before changing anything).
-- agent/prompts/v2.md: a rewritten prompt that encodes every rule in CLAUDE.md, the call flow (identify, verify OTP, state dues, find the reason, resolve, confirm, record outcome) and the exact other-products line.
+- agent/prompts/v2.md is already drafted in the repo. Use it as written, filling {today} and {customer_name} from the call. Do not put account details in the v2 system prompt: v2 gets them only from get_account_summary after OTP. If a v1 failure is not addressed by the draft, propose the exact wording change and wait for my approval before editing the prompt.
+- If the draft uses a tool argument or outcome reason the code does not support, change the code to match the draft and CLAUDE.md, not the other way round.
 - Code guardrails that do not rely on the prompt:
   - OTP gate on get_account_summary (ENFORCE_OTP).
   - A reply check before speech: every number spoken must come from tool results or config (3.5, 750, 10,000, 2); block CIBIL or credit-score talk, legal threats or advice, and waiver approval. On a violation, replace the sentence with a safe line and log the block.
@@ -197,6 +198,12 @@ Build v2 based on the v1 eval results in runs/results/ (read the latest v1 CSV f
   - A call timer: at 2:30 the bot moves to close; at 3:00 it records CALLBACK_REQUEST with reason call_time_limit.
   - record_outcome ends the call. Discard any model text generated after it, and speak one closing line built in code from the recorded outcome (for example it restates the promise date and amount from the outcome itself). The closing line must not ask "anything else I can help you with", because the bot only handles the pending payment.
   - In agent core, never join text from before and after a tool call into one reply. Each bot turn is one coherent reply.
+  - A PROMISE_TO_PAY is only accepted by record_outcome if the date and amount appear in the customer's own words in the transcript, and the customer's last turn before the call was an agreement. Otherwise the tool refuses and tells the model to confirm first.
+  - Post-call extraction may only produce an outcome the customer's words support. If the customer never committed to anything, it records CALLBACK_REQUEST with reason call_time_limit (if the timer ended the call) or no outcome with a flag, never an invented promise. (In v1 run S18, extraction recorded a promise the customer never made.)
+- Eval fixes, applied before the v2 run and then re-run on v1 so both versions are scored the same way:
+  - New code check unconfirmed_commitment: a recorded PROMISE_TO_PAY whose date or amount the customer never said.
+  - judge_reason_explored passes when the bot asked about the reason, even if the customer did not give one, and is n/a for S02, S05, S09, S10, S11, S15 and S17, where exploring the reason is not the right move.
+  - Report a check-level failure rate (failed checks out of applicable checks) beside the scenario-level rate. v1 is 119 of 255 (46.7%).
 - Keep the same model as v1.
 Rerun run_evals.py for v2 and produce runs/results/comparison.md: a v1 vs v2 table by scenario and by failure bucket.
 Commit as "v2 prompt and guardrails".
