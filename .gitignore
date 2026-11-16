@@ -1,0 +1,20 @@
+# Secrets
+.env
+
+# Call outputs (transcripts, outcomes)
+runs/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.ruff_cache/
+
+# Audio
+*.wav
+*.mp3
+*.ogg
+*.flac
+*.m4a
+*.pcm
