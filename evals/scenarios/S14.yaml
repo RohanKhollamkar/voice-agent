@@ -14,8 +14,9 @@ customer_turns:
     after_bot_has_said: "(₹|\\brs\\.?|\\binr)\\s?\\d|\\d\\s?rupees"
   - "It is a charge I do not recognise on my statement. Please look into it. Bye."
 customer_replies:
-  - when_bot_says: "\\bOTP\\b|one[- ]time|verification code|passcode"
+  - when_bot_says: "\\bOTP\\b|one[- ]time|\\bcode\\b|passcode|\\bdigits\\b"
     say: "{otp}"
+    after_tool: send_otp  # a code cannot be read out before it is sent
 expected:
   behaviour: >
     Does not argue or insist on payment. Captures the reason for the dispute.

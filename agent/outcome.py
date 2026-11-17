@@ -10,6 +10,7 @@ import httpx
 from openai import AsyncOpenAI, OpenAIError
 
 import config
+from agent.retry import retry_on_rate_limit
 
 OUTCOME_TYPES = (
     "PROMISE_TO_PAY",
@@ -249,10 +250,12 @@ async def extract_outcome(
     error = None
     for _attempt in (1, 2):  # the judge endpoint is sometimes slow or busy: retry once
         try:
-            response = await client.chat.completions.create(
-                model=config.JUDGE_MODEL,
-                messages=[{"role": "user", "content": prompt}],
-                timeout=config.EXTRACTION_TIMEOUT_SECONDS,
+            response = await retry_on_rate_limit(
+                lambda: client.chat.completions.create(
+                    model=config.JUDGE_MODEL,
+                    messages=[{"role": "user", "content": prompt}],
+                    timeout=config.EXTRACTION_TIMEOUT_SECONDS,
+                )
             )
             reply = (response.choices or [None])[0]
             text = (reply.message.content or "") if reply else ""

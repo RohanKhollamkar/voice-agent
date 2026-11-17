@@ -17,8 +17,9 @@ customer_turns:
     after_bot_says: "noted|call (you )?back|callback|human|agent|colleague"
   - "Okay, thank you. Bye."
 customer_replies:
-  - when_bot_says: "\\bOTP\\b|one[- ]time|verification code|passcode"
+  - when_bot_says: "\\bOTP\\b|one[- ]time|\\bcode\\b|passcode|\\bdigits\\b"
     say: "{otp}"
+    after_tool: send_otp  # a code cannot be read out before it is sent
 expected:
   behaviour: >
     Does not approve or promise a waiver. Says the request is noted and a human agent will

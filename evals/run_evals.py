@@ -24,6 +24,7 @@ from openai import AsyncOpenAI, OpenAIError
 import config
 from agent import mock_bank
 from agent.core import Agent, now
+from agent.retry import retry_on_rate_limit
 from agent.tools import TOOLS
 from evals.checks import Check, run_checks
 from evals.judge import judge_call
@@ -83,9 +84,15 @@ def load_scenarios(only: str | None = None, priority: str = "all") -> list[dict]
                 _scripted_line(turn, path.name) for turn in scenario["customer_turns"]
             ]
         for reply in scenario.get("customer_replies", []):
-            if set(reply) != {"when_bot_says", "say"}:
+            allowed = {"when_bot_says", "say", "after_tool"}
+            if not {"when_bot_says", "say"} <= set(reply) <= allowed:
                 raise ValueError(
-                    f"{path.name}: a customer reply needs when_bot_says and say"
+                    f"{path.name}: a customer reply needs when_bot_says and say, "
+                    "and may have after_tool"
+                )
+            if reply.get("after_tool", "send_otp") not in TOOLS:
+                raise ValueError(
+                    f"{path.name}: after_tool must be one of {list(TOOLS)}"
                 )
             re.compile(reply["when_bot_says"])  # raises on a broken pattern
             if isinstance(reply["say"], str):
@@ -138,11 +145,25 @@ def trigger_fired(line: dict, agent: Agent, bot_reply: str) -> bool:
     return True  # no trigger: play on the next turn
 
 
-def reply_to_question(scenario: dict, used: dict, bot_reply: str) -> str | None:
+def reply_to_question(
+    scenario: dict, used: dict, bot_reply: str, agent: Agent
+) -> str | None:
     """customer_replies are answers the customer gives only if asked ("the OTP, when the
-    bot asks for it"). If the bot's last reply asks, return the next unused answer."""
+    bot asks for it"). If the bot's last reply asks, return the next unused answer. A
+    reply with after_tool waits until the bot has called that tool: a customer cannot
+    read out a code that has not been sent."""
     for number, reply in enumerate(scenario.get("customer_replies", [])):
         if used.get(number, 0) >= len(reply["say"]):
+            continue
+        sent = (
+            any(
+                e["type"] == "tool_call" and e["name"] == reply["after_tool"]
+                for e in agent.events
+            )
+            if "after_tool" in reply
+            else True
+        )
+        if not sent:
             continue
         if re.search(reply["when_bot_says"], bot_reply, re.IGNORECASE):
             used[number] = used.get(number, 0) + 1
@@ -168,7 +189,7 @@ async def play_script(
             1  # bot turns this line has waited through; the one just heard is the first
         )
         while not agent.ended:
-            answer = reply_to_question(scenario, used, bot_reply)
+            answer = reply_to_question(scenario, used, bot_reply, agent)
             if answer is not None:  # answering a question does not count as waiting
                 bot_reply = await say(answer)
             elif trigger_fired(line, agent, bot_reply):
@@ -188,7 +209,7 @@ async def play_script(
 
     # The script is done; keep answering direct questions (a last OTP or mode) if asked.
     while not agent.ended:
-        answer = reply_to_question(scenario, used, bot_reply)
+        answer = reply_to_question(scenario, used, bot_reply, agent)
         if answer is None:
             break
         bot_reply = await say(answer)
@@ -217,11 +238,13 @@ async def simulated_customer_line(
             {"role": "user" if speaker == "bot" else "assistant", "content": text}
         )
     try:
-        response = await client.chat.completions.create(
-            model=config.CUSTOMER_MODEL,
-            messages=messages,
-            timeout=config.EXTRACTION_TIMEOUT_SECONDS,
-            extra_body=config.LLM_EXTRA_BODY,
+        response = await retry_on_rate_limit(
+            lambda: client.chat.completions.create(
+                model=config.CUSTOMER_MODEL,
+                messages=messages,
+                timeout=config.EXTRACTION_TIMEOUT_SECONDS,
+                extra_body=config.LLM_EXTRA_BODY,
+            )
         )
         return (response.choices[0].message.content or "").strip() or HANGUP
     except (OpenAIError, IndexError) as failure:

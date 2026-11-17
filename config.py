@@ -52,6 +52,8 @@ ELEVENLABS_VOICE_ID: str = _get_str("ELEVENLABS_VOICE_ID", "EXAVITQu4vr4xnSDxMaL
 # Language model calls
 LLM_TIMEOUT_SECONDS: float = 8  # after this the bot falls back to BACKUP_MODEL
 EXTRACTION_TIMEOUT_SECONDS: float = 60  # post-call outcome extraction, not live
+# Waits before retrying a rate-limited judge, extraction or simulated-customer request
+RATE_LIMIT_WAITS_SECONDS: tuple[int, ...] = (10, 30, 60)
 
 # Bank rules (from the brief; the bot's figures come from here, never from the model)
 MONTHLY_INTEREST_RATE_PERCENT: float = 3.5
@@ -60,6 +62,7 @@ LATE_FEE_BALANCE_THRESHOLD: int = 10_000  # late fee applies only above this bal
 
 # The brief's limit on call length. Text-mode evals estimate it from word count.
 CALL_MAX_SECONDS: int = 180
+CALL_CLOSE_WARNING_SECONDS: int = 150  # v2: the bot is told to move to close
 SPEAKING_WORDS_PER_MINUTE: int = 150
 CALL_LENGTH_TOLERANCE_SECONDS: int = 30  # allowed on top, for the word-count estimate
 

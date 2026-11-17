@@ -54,12 +54,13 @@ With no `outcome_type`, any valid outcome passes.
 
 While a line waits, the customer says "Okay." (or the line's `while_waiting`). If the trigger has not fired after 3 bot turns, the line is said anyway and the run logs `trigger_missed`.
 
-`customer_replies` are answers given only when the bot's last reply asks for them, such as the OTP. They take priority over the script and do not count as waiting. `say` can be a list, used one per ask: a wrong OTP, then another.
+`customer_replies` are answers given only when the bot's last reply asks for them, such as the OTP. They take priority over the script and do not count as waiting. `say` can be a list, used one per ask: a wrong OTP, then another. `after_tool` holds a reply back until the bot has called that tool, so the OTP is read out only once `send_otp` has been called.
 
 ```yaml
 customer_replies:
-  - when_bot_says: "\\bOTP\\b|one[- ]time"
+  - when_bot_says: "\\bOTP\\b|one[- ]time|\\bcode\\b"
     say: "{otp}"                     # {otp} becomes the customer's one-time password
+    after_tool: send_otp             # only once the code has actually been sent
 ```
 
 Patterns are regular expressions and ignore case.

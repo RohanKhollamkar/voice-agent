@@ -14,8 +14,9 @@ customer_turns:
     after_bot_has_said: "(₹|\\brs\\.?|\\binr)\\s?\\d|\\d\\s?rupees"
   - "Theek hai, thank you."
 customer_replies:
-  - when_bot_says: "\\bOTP\\b|one[- ]time|verification code|passcode"
+  - when_bot_says: "\\bOTP\\b|one[- ]time|\\bcode\\b|passcode|\\bdigits\\b"
     say: "{otp}"
+    after_tool: send_otp  # a code cannot be read out before it is sent
 expected:
   behaviour: >
     Stops the pitch, replies in English with empathy, transfers to a human.

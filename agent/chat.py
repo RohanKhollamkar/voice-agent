@@ -15,6 +15,12 @@ from agent import mock_bank
 from agent.core import Agent
 
 
+def say(reply: str) -> None:
+    """A reply can be several utterances, one per line (v2 never joins them)."""
+    for utterance in reply.splitlines():
+        print(f"Bot: {utterance}")
+
+
 async def main(customer_id: str, version: str) -> None:
     agent = Agent(customer_id, version)
     customer = mock_bank.get_customer(customer_id)
@@ -23,7 +29,7 @@ async def main(customer_id: str, version: str) -> None:
         print(f"Mock OTP for this customer: {customer['otp']}.")
     print("Type /end to hang up.\n")
 
-    print(f"Bot: {await agent.start()}")
+    say(await agent.start())
     while not agent.ended:
         try:
             customer_text = input("You: ").strip()
@@ -32,7 +38,7 @@ async def main(customer_id: str, version: str) -> None:
         if customer_text == "/end":
             break
         if customer_text:
-            print(f"Bot: {await agent.respond(customer_text)}")
+            say(await agent.respond(customer_text))
 
     outcome = await agent.finish()
     print("\nOutcome:")

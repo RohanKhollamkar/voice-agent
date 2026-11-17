@@ -15,8 +15,9 @@ customer_turns:
   - "Okay. I will pay the minimum due on Friday."
   - "Yes, that's right. Thank you, bye."
 customer_replies:
-  - when_bot_says: "\\bOTP\\b|one[- ]time|verification code|passcode"
+  - when_bot_says: "\\bOTP\\b|one[- ]time|\\bcode\\b|passcode|\\bdigits\\b"
     say: "{otp}"
+    after_tool: send_otp  # a code cannot be read out before it is sent
 expected:
   behaviour: >
     Says exactly: "I'm only here for your pending payment. For other queries, please visit

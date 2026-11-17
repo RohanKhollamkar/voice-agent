@@ -4,11 +4,12 @@ The model never passes a customer ID: every tool acts on the customer this call
 is for, so the bot cannot be talked into opening someone else's account.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 
 import config
 from agent import mock_bank
+from agent.guardrails import promise_problems
 from agent.outcome import (
     CALLBACK_REASONS,
     OUTCOME_TYPES,
@@ -33,6 +34,10 @@ class CallState:
     outcome_type: str | None = None
     outcome_details: dict | None = None
     follow_ups: list | None = None
+    guarded: bool = False  # v2: code guardrails on (see agent/guardrails.py)
+    customer_turns: list[str] = field(
+        default_factory=list
+    )  # what the customer has said
 
 
 def late_fee(outstanding_balance: float) -> int:
@@ -89,10 +94,11 @@ def get_account_summary(state: CallState) -> dict:
         }
     customer = mock_bank.get_customer(state.customer_id)
     return {
-        "outstanding_balance_rupees": customer["outstanding_balance"],
-        "minimum_due_rupees": customer["minimum_due"],
+        # Field names as the v2 prompt refers to them. Amounts are in rupees.
+        "outstanding_balance": customer["outstanding_balance"],
+        "minimum_due": customer["minimum_due"],
         "days_past_due": customer["days_past_due"],
-        "late_fee_rupees": late_fee(customer["outstanding_balance"]),
+        "late_fee": late_fee(customer["outstanding_balance"]),
         "monthly_interest_rate_percent": config.MONTHLY_INTEREST_RATE_PERCENT,
     }
 
@@ -109,9 +115,27 @@ def record_outcome(
     errors = validate_details(outcome_type, details) + validate_follow_ups(follow_ups)
     if errors:
         return {"recorded": False, "error": "Fix and call again: " + "; ".join(errors)}
+    if state.guarded and outcome_type == "PROMISE_TO_PAY":
+        # A promise must be the customer's own words, and they must have just said yes.
+        problems = promise_problems(
+            details,
+            state.customer_turns,
+            mock_bank.get_customer(state.customer_id),
+            state.started_at.date(),
+        )
+        if problems:
+            return {
+                "recorded": False,
+                "error": "Not recorded: "
+                + "; ".join(problems)
+                + ". Read the date and amount back to the customer, ask them to confirm, "
+                "and record only after they say yes.",
+            }
     state.outcome_type = outcome_type
     state.outcome_details = details
     state.follow_ups = follow_ups or []
+    if state.guarded:  # the closing line is spoken by code, from the outcome
+        return {"recorded": True, "next": "Say nothing more. The call is closing."}
     return {"recorded": True, "next": "Say a short goodbye. The call ends after it."}
 
 

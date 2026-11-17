@@ -278,7 +278,9 @@ def check_required_figures(transcript: dict, scenario: dict) -> Check:
     required = _expected(scenario).get("bot_must_say")
     if not required:
         return Check(name, category, None, "scenario requires no specific figure")
+    # "3.5%" may be spoken as "3.5 percent" or "3.5 per cent".
     said = " ".join(_turns(transcript, "bot")).lower()
+    said = re.sub(r"\s?(?:percent|per cent)\b", "%", said)
     missing = [text for text in required if text.lower() not in said]
     if missing:
         return Check(name, category, False, "bot never said: " + ", ".join(missing))

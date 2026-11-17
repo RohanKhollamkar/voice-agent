@@ -12,6 +12,7 @@ import json
 from openai import AsyncOpenAI, OpenAIError
 
 import config
+from agent.retry import retry_on_rate_limit
 from evals.checks import Check
 
 JUDGE_PROMPT = """\
@@ -88,10 +89,12 @@ async def judge_call(
     verdicts, error = None, ""
     for _attempt in (1, 2):  # retry once
         try:
-            response = await client.chat.completions.create(
-                model=model or config.JUDGE_MODEL,
-                messages=[{"role": "user", "content": prompt}],
-                timeout=config.EXTRACTION_TIMEOUT_SECONDS,
+            response = await retry_on_rate_limit(
+                lambda: client.chat.completions.create(
+                    model=model or config.JUDGE_MODEL,
+                    messages=[{"role": "user", "content": prompt}],
+                    timeout=config.EXTRACTION_TIMEOUT_SECONDS,
+                )
             )
             text = response.choices[0].message.content or ""
             verdicts = json.loads(text[text.index("{") : text.rindex("}") + 1])
