@@ -4,6 +4,7 @@ Run from the repo root:
     python -m evals.run_evals --version v1
     python -m evals.run_evals --version v1 --priority core
     python -m evals.run_evals --version v1 --scenario S03
+    python -m evals.run_evals --version v1 --runs 3
 
 Writes runs/results/<version>_<timestamp>.csv (one row per scenario and check) and
 a summary next to it. Transcripts go to runs/transcripts/ as for any call.
@@ -255,100 +256,181 @@ async def run_call(
     return json.loads(agent.transcript_path.read_text(encoding="utf-8")), missed
 
 
+def _rate(failed: int, applied: int) -> float | None:
+    return failed / applied if applied else None
+
+
+def _mean_range(rates: list[float | None]) -> str:
+    """ "47% [45%–50%]": the mean across runs, then the lowest and highest run."""
+    rates = [rate for rate in rates if rate is not None]
+    if not rates:
+        return "not applicable"
+    mean = sum(rates) / len(rates)
+    if len(rates) == 1:
+        return f"{mean:.0%}"
+    return f"{mean:.0%} [{min(rates):.0%}–{max(rates):.0%}]"
+
+
 def summarise(rows: list[dict], version: str) -> str:
-    """The run in three tables: by category, by rule, and every failure with its evidence."""
+    """The run as text: overall and by category at scenario level and check level, by
+    rule, a spot-check list, and every failure with its evidence. With several runs,
+    each rate is the mean across runs with the range across runs."""
+    runs = sorted({row["run"] for row in rows})
     scenario_ids = list(dict.fromkeys(row["scenario_id"] for row in rows))
-    failed_any = {r["scenario_id"] for r in rows if r["result"] == "fail"}
+    scored = [r for r in rows if r["result"] in ("pass", "fail")]
+    failed = [r for r in scored if r["result"] == "fail"]
+
+    def per_run(of: list[dict]) -> list[list[dict]]:
+        return [[r for r in of if r["run"] == run] for run in runs]
+
+    def scenarios_in(of: list[dict]) -> int:
+        return len({r["scenario_id"] for r in of})
+
+    def check_level(of: list[dict]) -> str:
+        return _mean_range(
+            [_rate(sum(r["result"] == "fail" for r in a), len(a)) for a in per_run(of)]
+        )
+
+    scenario_level = _mean_range(
+        [_rate(scenarios_in(f), len(scenario_ids)) for f in per_run(failed)]
+    )
+    overall = f"{check_level(scored)}  ({len(failed)} of {len(scored)} over all runs)"
     lines = [
-        (
-            f"Eval summary: bot {version}, {len(scenario_ids)} scenarios, "
-            f"{len(failed_any)} with at least one failed check"
-        ),
+        f"Eval summary: bot {version}, {len(scenario_ids)} scenarios, {len(runs)} run(s)",
+        "Rates are the mean across runs, with [lowest–highest run] when there are several.",
         "",
-        "By category (of the scenarios that target the category, how many failed a check",
-        "in that category):",
+        "Overall",
+        f"  scenario level (scenarios with at least one failed check):  {scenario_level}",
+        f"  check level (failed checks out of applicable checks):       {overall}",
+        "",
+        "By category (scenarios that target it; scenario level = failed a check in that",
+        "category; check level = failed checks out of applicable checks on those scenarios)",
+        f"  {'category':12} {'scenarios':>9}  {'scenario level':22} check level",
     ]
     for category in CATEGORIES:
-        targeting = {r["scenario_id"] for r in rows if r["category"] == category}
-        failed = {
-            r["scenario_id"]
-            for r in rows
-            if r["category"] == category
-            and r["check_category"] == category
-            and r["result"] == "fail"
-        }
+        targeting = [r for r in scored if r["category"] == category]
         if not targeting:
             lines.append(
                 f"  {category:12} untested (no scenario in this run targets it)"
             )
-        else:
-            rate = len(failed) / len(targeting)
-            lines.append(
-                f"  {category:12} {len(failed)}/{len(targeting)} failed  ({rate:.0%})"
-            )
-
-    lines += ["", "By rule (calls the check failed, out of calls it applied to):"]
-    for check in dict.fromkeys(row["check"] for row in rows):
-        applied = [
-            r for r in rows if r["check"] == check and r["result"] in ("pass", "fail")
+            continue
+        count = scenarios_in(targeting)
+        in_category = [
+            r
+            for r in targeting
+            if r["check_category"] == category and r["result"] == "fail"
         ]
-        failed = [r for r in applied if r["result"] == "fail"]
-        where = " ".join(r["scenario_id"] for r in failed)
-        count = f"{len(failed)}/{len(applied)}" if applied else "not applicable"
-        lines.append(f"  {check:24} {count:>6}  {where}".rstrip())
+        level = _mean_range(
+            [_rate(scenarios_in(f), count) for f in per_run(in_category)]
+        )
+        lines.append(f"  {category:12} {count:>9}  {level:22} {check_level(targeting)}")
 
-    lines += ["", "Failed checks:"]
-    failures = [r for r in rows if r["result"] == "fail"]
-    for row in failures:
-        lines.append(f"  {row['scenario_id']}  {row['check']}: {row['evidence']}")
-    if not failures:
+    lines += [
+        "",
+        "By rule (failure rate; failed/applied in each run; then the scenarios it failed",
+        "in, with the number of runs)",
+    ]
+    for check in dict.fromkeys(row["check"] for row in rows):
+        mine = [r for r in scored if r["check"] == check]
+        counts = " ".join(
+            f"{sum(r['result'] == 'fail' for r in a)}/{len(a)}" for a in per_run(mine)
+        )
+        where = []
+        for scenario_id in scenario_ids:
+            times = sum(
+                r["result"] == "fail" for r in mine if r["scenario_id"] == scenario_id
+            )
+            if times:
+                where.append(f"{scenario_id}×{times}" if len(runs) > 1 else scenario_id)
+        line = f"  {check:27} {check_level(mine):18} {counts:18} {' '.join(where)}"
+        lines.append(line.rstrip())
+
+    lines += [
+        "",
+        "Spot-check list (every waiver_approval and other_product_talk flag, to review by hand)",
+    ]
+    flags = [
+        r for r in failed if r["check"] in ("waiver_approval", "other_product_talk")
+    ]
+    lines += [
+        f"  run {r['run']} {r['scenario_id']} {r['check']}: {r['evidence']}"
+        for r in flags
+    ]
+    if not flags:
+        lines.append("  none")
+
+    lines += ["", "Failed checks"]
+    lines += [
+        f"  run {r['run']} {r['scenario_id']} {r['check']}: {r['evidence']}"
+        for r in failed
+    ]
+    if not failed:
         lines.append("  none")
 
     missed = {
-        r["scenario_id"]: r["trigger_missed"] for r in rows if r["trigger_missed"]
+        (r["run"], r["scenario_id"]): r["trigger_missed"]
+        for r in rows
+        if r["trigger_missed"]
     }
     if missed:
-        lines += ["", "trigger_missed (scripted lines played without their trigger):"]
-        lines += [f"  {scenario_id}  {text}" for scenario_id, text in missed.items()]
-
+        lines += ["", "trigger_missed (scripted lines played without their trigger)"]
+        lines += [f"  run {run} {sid}  {text}" for (run, sid), text in missed.items()]
+    extracted = [
+        r
+        for r in rows
+        if r["check"] == "missing_outcome" and "post_call_extraction" in r["evidence"]
+    ]
+    calls = len(runs) * len(scenario_ids)
+    lines += [
+        "",
+        f"Outcomes the bot did not record itself: {len(extracted)} of {calls} calls. In those the",
+        "outcome was read off the transcript after the call, so a pass on expected_outcome or",
+        "transfer there shows what the customer said, not that the bot acted on it.",
+    ]
     errors = [r for r in rows if r["result"] == "error"]
     if errors:
         lines += ["", f"Checks that could not run: {len(errors)} (see the CSV)"]
-    backup = sorted({r["scenario_id"] for r in rows if r["backup_model_used"] == "yes"})
+    backup = sorted(
+        {
+            f"run {r['run']} {r['scenario_id']}"
+            for r in rows
+            if r["backup_model_used"] == "yes"
+        }
+    )
     if backup:
         lines += [
             "",
             "Calls where the backup model answered a turn: " + ", ".join(backup),
         ]
+    lines += [
+        "",
+        "Note: call length is estimated from the words spoken, because text mode has no audio.",
+        "Real timing, including the 2:30 and 3:00 marks, is tested in voice.",
+    ]
     return "\n".join(lines)
 
 
-async def main(
-    version: str, only: str | None, priority: str, pace: float, post_webhook: bool
-) -> None:
-    if not post_webhook:
-        config.WEBHOOK_URL = (
-            ""  # eval calls are not real outcomes; keep them off the webhook
-        )
-    scenarios = load_scenarios(only, priority)
-    client = AsyncOpenAI(
-        api_key=config.NVIDIA_API_KEY, base_url=config.NVIDIA_BASE_URL, max_retries=0
-    )
-
+async def run_once(
+    client: AsyncOpenAI, scenarios: list[dict], version: str, run: int, pace: float
+) -> list[dict]:
+    """Play every scenario once and return one row per scenario and check."""
     rows = []
     for number, scenario in enumerate(scenarios, start=1):
-        print(f"[{number}/{len(scenarios)}] {scenario['id']} {scenario['title']}")
         transcript, missed = await run_call(client, scenario, version, pace)
+        checks: list[Check] = run_checks(transcript, scenario)
+        checks += await judge_call(client, transcript, scenario)
+        backup_used = any(e["type"] == "llm_error" for e in transcript["events"])
+        print(
+            f"[run {run}: {number}/{len(scenarios)}] {scenario['id']} {scenario['title']}"
+        )
         for line in missed:
             print(f"    trigger_missed {line}")
-        checks: list[Check] = run_checks(transcript, scenario)
-        checks += await judge_call(client, transcript)
-        backup_used = any(e["type"] == "llm_error" for e in transcript["events"])
         for check in checks:
             if check.result in ("fail", "error"):
                 print(f"    {check.result.upper():5} {check.name}: {check.evidence}")
             rows.append(
                 {
+                    "run": run,
                     "scenario_id": scenario["id"],
                     "title": scenario["title"],
                     "source": scenario["source"],
@@ -366,6 +448,31 @@ async def main(
                     "transcript_path": f"runs/transcripts/{transcript['call_id']}.json",
                 }
             )
+    return rows
+
+
+async def main(
+    version: str,
+    only: str | None,
+    priority: str,
+    runs: int,
+    pace: float,
+    post_webhook: bool,
+) -> None:
+    if not post_webhook:
+        config.WEBHOOK_URL = (
+            ""  # eval calls are not real outcomes; keep them off the webhook
+        )
+    scenarios = load_scenarios(only, priority)
+    client = AsyncOpenAI(
+        api_key=config.NVIDIA_API_KEY, base_url=config.NVIDIA_BASE_URL, max_retries=0
+    )
+    # The runs go side by side to save time; each one plays its scenarios in order. If the
+    # summary lists many backup-model calls, the provider is rate-limiting: raise --pace.
+    per_run = await asyncio.gather(
+        *(run_once(client, scenarios, version, run, pace) for run in range(1, runs + 1))
+    )
+    rows = [row for run_rows in per_run for row in run_rows]
 
     results_dir = config.RUNS_DIR / "results"
     results_dir.mkdir(parents=True, exist_ok=True)
@@ -394,6 +501,12 @@ if __name__ == "__main__":
         help="core runs only the core scenarios; all (the default) adds the extra ones",
     )
     parser.add_argument(
+        "--runs",
+        type=int,
+        default=1,
+        help="play every scenario this many times; rates are then means with a range",
+    )
+    parser.add_argument(
         "--pace",
         type=float,
         default=1.5,
@@ -406,5 +519,12 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
     asyncio.run(
-        main(args.version, args.scenario, args.priority, args.pace, args.post_webhook)
+        main(
+            args.version,
+            args.scenario,
+            args.priority,
+            args.runs,
+            args.pace,
+            args.post_webhook,
+        )
     )

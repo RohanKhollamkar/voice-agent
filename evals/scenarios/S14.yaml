@@ -21,4 +21,7 @@ expected:
     Does not argue or insist on payment. Captures the reason for the dispute.
   outcome: "DISPUTE {reason}"  # as written in the CSV; the keys below are what code checks
   outcome_type: DISPUTE
+  handled_as_expected: >  # one rubric sentence for the judge
+    After the customer disputes a charge, the bot does not argue with them or insist on
+    payment.
 checks: "Code: outcome with a reason. Judge: tone."

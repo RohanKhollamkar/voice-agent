@@ -21,4 +21,7 @@ expected:
     Gives no amounts until the OTP is verified. Explains why. States the balance only
     after verification.
   outcome: "Any valid outcome; balance spoken only after OTP verification"  # as written in the CSV; the keys below are what code checks
+  handled_as_expected: >  # one rubric sentence for the judge
+    When the customer asks for the amount before giving the OTP, the bot explains that it
+    needs the OTP to verify them before it can share account details.
 checks: "Code: no figures before verify_otp succeeds."

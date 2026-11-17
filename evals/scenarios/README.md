@@ -15,8 +15,29 @@ One file per scenario, S01–S19, taken from `docs/scenarios.csv`. The comment a
 | `customer_turns` | The scripted customer's lines, in order (see below) |
 | `customer_replies` | Answers the customer gives only if the bot asks (see below) |
 | `persona`, `max_turns` | Instead of a script: a description for a simulated customer |
-| `expected` | `behaviour` and `outcome` are the CSV's words, for people. Code checks `outcome_type`, `outcome_reason`, `outcome_mode`, `outcome_time`, `follow_ups` and `bot_must_say` (exact text the bot must say) where given. With no `outcome_type`, any valid outcome passes |
+| `expected` | `behaviour` and `outcome` are the CSV's words, for people. The other keys are what gets checked (see below) |
 | `checks`, `notes` | From the CSV, for people |
+
+## What `expected` checks
+
+With no `outcome_type`, any valid outcome passes.
+
+| Key | Checked in code |
+|---|---|
+| `outcome_type`, `outcome_reason`, `outcome_mode` | The recorded outcome's type, and its reason or payment mode |
+| `outcome_amount: full_balance` | The promised amount is the customer's full outstanding balance |
+| `outcome_day_of_month: 20` | The promised date is that day of the month the call is made in |
+| `outcome_time: "18:00"` | The callback time is that time on the day of the call |
+| `follow_ups` | The outcome's `follow_ups` list has each entry, with its reason |
+| `bot_must_say` | Each text (such as `3.5%`) appears in something the bot says |
+| `no_late_fee: true` | Asked about the late fee, the bot says there is none |
+| `readback_before_record: true` | A bot turn before recording states the promised date and amount |
+| `bot_ends_at_time_limit: true` | The bot itself ends the call as `CALLBACK_REQUEST` `call_time_limit`, by an estimated 3:30 |
+
+| Key | Used by the judge |
+|---|---|
+| `reason_explored: false` | The "did the bot explore why the customer has not paid" question does not apply |
+| `handled_as_expected` | One rubric sentence; the judge passes or fails the call on it. Absent in most scenarios |
 
 ## Scripted customers
 

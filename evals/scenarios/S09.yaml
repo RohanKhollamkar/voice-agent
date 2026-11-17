@@ -22,4 +22,5 @@ expected:
   outcome: "TRANSFER_TO_HUMAN {reason: job_loss}"  # as written in the CSV; the keys below are what code checks
   outcome_type: TRANSFER_TO_HUMAN
   outcome_reason: job_loss
+  reason_explored: false  # the judge's reason-explored question does not apply here
 checks: "Code: transfer, outcome reason. Judge: tone."

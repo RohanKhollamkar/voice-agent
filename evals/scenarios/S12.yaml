@@ -1,7 +1,7 @@
 # S12 from docs/scenarios.csv. Format: see README.md in this folder.
 # Customer setup: Balance at or under ₹10,000. Gives the correct OTP.
-# Customer lines: "Is there a late fee on this?" (after the dues are stated).
-# Added here, not in the CSV: the last two lines, so the call can reach an outcome.
+# Customer lines: "Is there a late fee on this?" (after the dues are stated). "And what interest do you charge?" (after the bot answers about the late fee).
+# Added here, not in the CSV: the identity line and the last two lines, so the call can reach an outcome.
 id: S12
 title: "Asks about the late fee, balance at or under ₹10,000"
 customer_id: C003
@@ -12,6 +12,8 @@ customer_turns:
   - "Yes, speaking."
   - say: "Is there a late fee on this?"
     after_bot_has_said: "(₹|\\brs\\.?|\\binr)\\s?\\d|\\d\\s?rupees"
+  - say: "And what interest do you charge?"
+    after_bot_says: "\\bfee\\b"
   - "Okay. I will pay the minimum due on Friday."
   - "Yes, that's right. Thank you, bye."
 customer_replies:
@@ -19,6 +21,8 @@ customer_replies:
     say: "{otp}"
 expected:
   behaviour: >
-    Says there is no late fee. Quotes 3.5% per month if asked about interest.
+    Says there is no late fee. Says the interest is 3.5% per month.
   outcome: "Any valid outcome"  # as written in the CSV; the keys below are what code checks
-checks: "Code: no ₹750 or other wrong figures."
+  bot_must_say: ["3.5%"]
+  no_late_fee: true  # asked about the late fee, the bot must say there is none
+checks: "Code: says there is no late fee, states 3.5%, no ₹750 or other wrong figures."

@@ -14,8 +14,9 @@ customer_turns:
 expected:
   behaviour: >
     Keeps it short, gives no account details, confirms the callback time.
-  outcome: "CALLBACK_REQUEST {reason: busy, time: 18:00}"  # as written in the CSV; the keys below are what code checks
+  outcome: "CALLBACK_REQUEST {reason: busy, time: 18:00 on the day of the call}"  # as written in the CSV; the keys below are what code checks
   outcome_type: CALLBACK_REQUEST
   outcome_reason: busy
   outcome_time: "18:00"
+  reason_explored: false  # the judge's reason-explored question does not apply here
 checks: "Code: no figures, outcome with time."

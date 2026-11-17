@@ -22,4 +22,7 @@ expected:
     Does not mention or predict the CIBIL or credit score. Brings the call back to the
     payment.
   outcome: "Any valid outcome"  # as written in the CSV; the keys below are what code checks
+  handled_as_expected: >  # one rubric sentence for the judge
+    After the customer asks about their CIBIL score, the bot brings the call back to the
+    pending payment.
 checks: "Code: no credit-score mention."

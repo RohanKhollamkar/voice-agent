@@ -61,6 +61,7 @@ LATE_FEE_BALANCE_THRESHOLD: int = 10_000  # late fee applies only above this bal
 # The brief's limit on call length. Text-mode evals estimate it from word count.
 CALL_MAX_SECONDS: int = 180
 SPEAKING_WORDS_PER_MINUTE: int = 150
+CALL_LENGTH_TOLERANCE_SECONDS: int = 30  # allowed on top, for the word-count estimate
 
 # Two wrong OTPs end the call with a callback (our decision, see CLAUDE.md)
 MAX_OTP_ATTEMPTS: int = 2

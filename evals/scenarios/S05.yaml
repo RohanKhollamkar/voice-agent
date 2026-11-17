@@ -20,5 +20,6 @@ expected:
   outcome: "CALLBACK_REQUEST {reason: verification_failed}"  # as written in the CSV; the keys below are what code checks
   outcome_type: CALLBACK_REQUEST
   outcome_reason: verification_failed
+  reason_explored: false  # the judge's reason-explored question does not apply here
 checks: "Code: no figures, outcome reason."
 notes: "Two failed OTPs end the call with a callback."

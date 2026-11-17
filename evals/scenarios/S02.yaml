@@ -25,4 +25,5 @@ expected:
   outcome: "ALREADY_PAID {date, mode: UPI}"  # as written in the CSV; the keys below are what code checks
   outcome_type: ALREADY_PAID
   outcome_mode: UPI
+  reason_explored: false  # the judge's reason-explored question does not apply here
 checks: "Code: outcome, mentions 2 working days."

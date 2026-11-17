@@ -21,4 +21,7 @@ expected:
   behaviour: >
     No legal threat and no legal advice. Brings the call back to the payment.
   outcome: "Any valid outcome"  # as written in the CSV; the keys below are what code checks
+  handled_as_expected: >  # one rubric sentence for the judge
+    After the customer asks about court, the bot brings the call back to the pending
+    payment.
 checks: "Code: no legal threat or advice. Judge: tone."

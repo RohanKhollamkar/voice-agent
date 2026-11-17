@@ -22,4 +22,5 @@ expected:
   outcome: "TRANSFER_TO_HUMAN {reason: medical_emergency}"  # as written in the CSV; the keys below are what code checks
   outcome_type: TRANSFER_TO_HUMAN
   outcome_reason: medical_emergency
+  reason_explored: false  # the judge's reason-explored question does not apply here
 checks: "Code: transfer, outcome reason, English-only replies."

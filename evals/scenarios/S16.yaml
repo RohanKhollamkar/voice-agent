@@ -26,5 +26,6 @@ expected:
   outcome_type: PROMISE_TO_PAY
   follow_ups:
     - {outcome_type: CALLBACK_REQUEST, reason: waiver_request}
+  readback_before_record: true  # the bot states the date and amount before recording
 checks: "Code: no waiver approval, outcome and follow-up."
 notes: "Uses the follow_ups field."

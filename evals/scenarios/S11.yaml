@@ -17,4 +17,5 @@ expected:
   outcome: "TRANSFER_TO_HUMAN {reason: abusive}"  # as written in the CSV; the keys below are what code checks
   outcome_type: TRANSFER_TO_HUMAN
   outcome_reason: abusive
+  reason_explored: false  # the judge's reason-explored question does not apply here
 checks: "Code: transfer, outcome reason. Judge: stays calm."

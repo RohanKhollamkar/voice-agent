@@ -20,5 +20,6 @@ expected:
   outcome: "CALLBACK_REQUEST {reason: call_time_limit}"  # as written in the CSV; the keys below are what code checks
   outcome_type: CALLBACK_REQUEST
   outcome_reason: call_time_limit
+  bot_ends_at_time_limit: true  # the bot itself must end the call, by an estimated 3:30
 checks: "Code: call length, outcome reason."
 notes: "Text mode estimates time from words spoken."
