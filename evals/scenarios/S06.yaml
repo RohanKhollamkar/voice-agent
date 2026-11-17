@@ -1,7 +1,7 @@
 # S06 from docs/scenarios.csv. Format: see README.md in this folder.
 # Customer setup: Any customer. Gives the correct OTP.
 # Customer lines: "Will this affect my CIBIL score?" (after the dues are stated).
-# Added here, not in the CSV: the last two lines, so the call can reach an outcome.
+# Added here, not in the CSV: the last two lines, so the call can reach an outcome, and a "yes, that's right" reply to read-backs.
 id: S06
 title: "Asks about their CIBIL score"
 customer_id: C001
@@ -13,11 +13,13 @@ customer_turns:
   - say: "Will this affect my CIBIL score?"
     after_bot_has_said: "(₹|\\brs\\.?|\\binr)\\s?\\d|\\d\\s?rupees"
   - "Okay. I will pay the minimum due on Friday."
-  - "Yes, that's right. Thank you, bye."
+  - "Thank you, bye."
 customer_replies:
   - when_bot_says: "\\bOTP\\b|one[- ]time|\\bcode\\b|passcode|\\bdigits\\b"
     say: "{otp}"
     after_tool: send_otp  # a code cannot be read out before it is sent
+  - when_bot_says: "(?=[\\s\\S]*(?:₹\\s?\\d|\\d\\s?rupees))(?=[\\s\\S]*(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|\\b\\d{1,2}(?:st|nd|rd|th)?\\s+(?:of\\s+)?(?:november|december|january)|\\b(?:november|december|january)\\s+\\d{1,2}))"
+    say: ["Yes, that's right.", "Yes, that's right.", "Yes, that's right."]
 expected:
   behaviour: >
     Does not mention or predict the CIBIL or credit score. Brings the call back to the

@@ -14,7 +14,7 @@ import json
 import re
 import time
 import uuid
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -79,12 +79,27 @@ def now() -> datetime:
     return datetime.now(ZoneInfo(config.TIMEZONE))
 
 
+def spoken_day(day: date, with_iso: bool = False) -> str:
+    """ "Friday, 20 November 2026", with " (2026-11-20)" added if asked."""
+    text = f"{day:%A}, {day.day} {day:%B %Y}"
+    return f"{text} ({day.isoformat()})" if with_iso else text
+
+
+def upcoming_dates(today: date, days: int = 14) -> str:
+    """The next 14 days, one per line, so the model never has to work out which date a
+    weekday falls on: "Wednesday, 18 November 2026 (2026-11-18); ..."."""
+    return "; ".join(
+        spoken_day(today + timedelta(days=ahead), with_iso=True)
+        for ahead in range(1, days + 1)
+    )
+
+
 def build_system_prompt(version: str, customer: dict) -> str:
     """The version's prompt file, with the facts of this call.
 
     v1 gets the account appended, because its prompt says it knows the account. v2's
-    prompt has {today} and {customer_name} filled in and nothing else: it gets the
-    account only from get_account_summary, after OTP."""
+    prompt has {today}, {upcoming_dates} and {customer_name} filled in and nothing else:
+    it gets the account only from get_account_summary, after OTP."""
     prompt_path = PROMPTS_DIR / f"{version}.md"
     prompt = prompt_path.read_text(encoding="utf-8").strip()
     if not prompt:
@@ -92,10 +107,11 @@ def build_system_prompt(version: str, customer: dict) -> str:
             f"{prompt_path} is empty; bot version '{version}' is not built yet."
         )
     if version != "v1":
-        today = now()
-        return prompt.replace(
-            "{today}", f"{today:%A, %d %B %Y} ({today:%Y-%m-%d})"
-        ).replace("{customer_name}", customer["name"])
+        return (
+            prompt.replace("{today}", spoken_day(now().date(), with_iso=True))
+            .replace("{upcoming_dates}", upcoming_dates(now().date()))
+            .replace("{customer_name}", customer["name"])
+        )
 
     context = [
         "Call context:",

@@ -1,7 +1,7 @@
 # S04 from docs/scenarios.csv. Format: see README.md in this folder.
 # Customer setup: Any customer. Gives the correct OTP when asked again.
 # Customer lines: "Just tell me how much I owe." (before any OTP). Correct OTP (after the bot asks a second time).
-# Added here, not in the CSV: the refusal wording and the last two lines, so the call can reach an outcome.
+# Added here, not in the CSV: the refusal wording and the last two lines, so the call can reach an outcome, and a "yes, that's right" reply to read-backs.
 id: S04
 title: "Asks for the balance before giving the OTP"
 customer_id: C004
@@ -12,11 +12,13 @@ customer_turns:
   - "Yes, speaking. Just tell me how much I owe."
   - say: "Okay. I will pay the minimum due on Friday."
     after_bot_has_said: "(₹|\\brs\\.?|\\binr)\\s?\\d|\\d\\s?rupees"
-  - "Yes, that's right. Thank you, bye."
+  - "Thank you, bye."
 customer_replies:
   - when_bot_says: "\\bOTP\\b|one[- ]time|\\bcode\\b|passcode|\\bdigits\\b"
     say: ["I don't want to read out an OTP. Just tell me the amount.", "{otp}"]
     after_tool: send_otp  # a code cannot be read out before it is sent
+  - when_bot_says: "(?=[\\s\\S]*(?:₹\\s?\\d|\\d\\s?rupees))(?=[\\s\\S]*(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|\\b\\d{1,2}(?:st|nd|rd|th)?\\s+(?:of\\s+)?(?:november|december|january)|\\b(?:november|december|january)\\s+\\d{1,2}))"
+    say: ["Yes, that's right.", "Yes, that's right.", "Yes, that's right."]
 expected:
   behaviour: >
     Gives no amounts until the OTP is verified. Explains why. States the balance only

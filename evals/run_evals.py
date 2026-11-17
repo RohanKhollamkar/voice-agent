@@ -3,7 +3,8 @@
 Run from the repo root:
     python -m evals.run_evals --version v1
     python -m evals.run_evals --version v1 --priority core
-    python -m evals.run_evals --version v1 --scenario S03
+    python -m evals.run_evals --version v1 --scenario S03 S12
+    python -m evals.run_evals --version v1 --no-judge --concurrency 3
     python -m evals.run_evals --version v1 --runs 3
 
 Writes runs/results/<version>_<timestamp>.csv (one row per scenario and check) and
@@ -49,13 +50,13 @@ Who you are and how you behave:
 
 Stay inside this description. Do not invent new facts about yourself (an illness, a
 job loss, a payment you have made) unless the description says so.
-If you are asked for a one-time password, it is {otp}.
+{otp_line}
 Reply with only the words the customer says, as spoken on a phone call.
 When the call is over, or you would hang up, reply with exactly {hangup}.
 """
 
 
-def load_scenarios(only: str | None = None, priority: str = "all") -> list[dict]:
+def load_scenarios(only: list[str] | None = None, priority: str = "all") -> list[dict]:
     """Read and check every scenario file. A broken file stops the run with a clear error."""
     scenarios = []
     for path in sorted(SCENARIOS_DIR.glob("*.yaml")):
@@ -104,9 +105,10 @@ def load_scenarios(only: str | None = None, priority: str = "all") -> list[dict]
     if priority == "core":
         scenarios = [s for s in scenarios if s["priority"] == "core"]
     if only:
-        scenarios = [s for s in scenarios if s["id"] == only]
-        if not scenarios:
-            raise ValueError(f"No scenario with id '{only}'")
+        unknown = set(only) - {s["id"] for s in scenarios}
+        if unknown:
+            raise ValueError(f"No scenario with id {', '.join(sorted(unknown))}")
+        scenarios = [s for s in scenarios if s["id"] in only]
     return scenarios
 
 
@@ -217,17 +219,33 @@ async def play_script(
 
 
 async def simulated_customer_line(
-    client: AsyncOpenAI, scenario: dict, spoken: list[tuple[str, str]]
+    client: AsyncOpenAI, scenario: dict, spoken: list[tuple[str, str]], agent: Agent
 ) -> str:
-    """Ask CUSTOMER_MODEL for the customer's next line. Hangs up if the model fails."""
+    """Ask CUSTOMER_MODEL for the customer's next line. Hangs up if the model fails.
+
+    The simulated customer only learns the OTP once the bot has called send_otp: a
+    real customer cannot read out a code before it reaches their phone."""
     customer = mock_bank.get_customer(scenario["customer_id"])
+    sent = any(
+        e["type"] == "tool_call" and e["name"] == "send_otp" for e in agent.events
+    )
+    if sent:
+        otp_line = (
+            f"A one-time password has just reached your phone: {customer['otp']}. "
+            "Read it out if you are asked for it."
+        )
+    else:
+        otp_line = (
+            "No one-time password has reached your phone yet. If you are asked for one, "
+            "say you haven't received it. Never make up a code."
+        )
     messages = [
         {
             "role": "system",
             "content": CUSTOMER_PROMPT.format(
                 name=customer["name"],
                 persona=" ".join(scenario["persona"].split()),
-                otp=customer["otp"],
+                otp_line=otp_line,
                 hangup=HANGUP,
             ),
         }
@@ -269,7 +287,7 @@ async def run_call(
             if agent.ended:
                 break
             await asyncio.sleep(pace)
-            line = await simulated_customer_line(client, scenario, spoken)
+            line = await simulated_customer_line(client, scenario, spoken, agent)
             if HANGUP in line:
                 break
             spoken.append(("customer", line))
@@ -433,54 +451,59 @@ def summarise(rows: list[dict], version: str) -> str:
     return "\n".join(lines)
 
 
-async def run_once(
-    client: AsyncOpenAI, scenarios: list[dict], version: str, run: int, pace: float
+async def play_and_score(
+    client: AsyncOpenAI,
+    scenario: dict,
+    version: str,
+    run: int,
+    pace: float,
+    judge: bool,
 ) -> list[dict]:
-    """Play every scenario once and return one row per scenario and check."""
-    rows = []
-    for number, scenario in enumerate(scenarios, start=1):
-        transcript, missed = await run_call(client, scenario, version, pace)
-        checks: list[Check] = run_checks(transcript, scenario)
+    """Play one scenario once, score it, and return one row per check."""
+    transcript, missed = await run_call(client, scenario, version, pace)
+    checks: list[Check] = run_checks(transcript, scenario)
+    if judge:
         checks += await judge_call(client, transcript, scenario)
-        backup_used = any(e["type"] == "llm_error" for e in transcript["events"])
-        print(
-            f"[run {run}: {number}/{len(scenarios)}] {scenario['id']} {scenario['title']}"
+    backup_used = any(e["type"] == "llm_error" for e in transcript["events"])
+    print(f"[run {run}] {scenario['id']} {scenario['title']}")
+    for line in missed:
+        print(f"    trigger_missed {line}")
+    rows = []
+    for check in checks:
+        if check.result in ("fail", "error"):
+            print(f"    {check.result.upper():5} {check.name}: {check.evidence}")
+        rows.append(
+            {
+                "run": run,
+                "scenario_id": scenario["id"],
+                "title": scenario["title"],
+                "source": scenario["source"],
+                "category": scenario["category"],
+                "priority": scenario["priority"],
+                "bot_version": version,
+                "check": check.name,
+                "kind": "judge" if check.name.startswith("judge_") else "code",
+                "check_category": check.category,
+                "result": check.result,
+                "evidence": check.evidence,
+                "backup_model_used": "yes" if backup_used else "no",
+                "trigger_missed": "; ".join(missed),
+                "call_id": transcript["call_id"],
+                "transcript_path": f"runs/transcripts/{transcript['call_id']}.json",
+            }
         )
-        for line in missed:
-            print(f"    trigger_missed {line}")
-        for check in checks:
-            if check.result in ("fail", "error"):
-                print(f"    {check.result.upper():5} {check.name}: {check.evidence}")
-            rows.append(
-                {
-                    "run": run,
-                    "scenario_id": scenario["id"],
-                    "title": scenario["title"],
-                    "source": scenario["source"],
-                    "category": scenario["category"],
-                    "priority": scenario["priority"],
-                    "bot_version": version,
-                    "check": check.name,
-                    "kind": "judge" if check.name.startswith("judge_") else "code",
-                    "check_category": check.category,
-                    "result": check.result,
-                    "evidence": check.evidence,
-                    "backup_model_used": "yes" if backup_used else "no",
-                    "trigger_missed": "; ".join(missed),
-                    "call_id": transcript["call_id"],
-                    "transcript_path": f"runs/transcripts/{transcript['call_id']}.json",
-                }
-            )
     return rows
 
 
 async def main(
     version: str,
-    only: str | None,
+    only: list[str] | None,
     priority: str,
     runs: int,
     pace: float,
     post_webhook: bool,
+    judge: bool,
+    concurrency: int,
 ) -> None:
     if not post_webhook:
         config.WEBHOOK_URL = (
@@ -490,12 +513,17 @@ async def main(
     client = AsyncOpenAI(
         api_key=config.NVIDIA_API_KEY, base_url=config.NVIDIA_BASE_URL, max_retries=0
     )
-    # The runs go side by side to save time; each one plays its scenarios in order. If the
-    # summary lists many backup-model calls, the provider is rate-limiting: raise --pace.
-    per_run = await asyncio.gather(
-        *(run_once(client, scenarios, version, run, pace) for run in range(1, runs + 1))
-    )
-    rows = [row for run_rows in per_run for row in run_rows]
+    # Every (run, scenario) pair is one call. At most `concurrency` calls run at once;
+    # more is faster but shares the provider's rate limit (see the backup-model list).
+    gate = asyncio.Semaphore(concurrency)
+
+    async def one(run: int, scenario: dict) -> list[dict]:
+        async with gate:
+            return await play_and_score(client, scenario, version, run, pace, judge)
+
+    calls = [(run, scenario) for run in range(1, runs + 1) for scenario in scenarios]
+    results = await asyncio.gather(*(one(run, scenario) for run, scenario in calls))
+    rows = [row for call_rows in results for row in call_rows]  # in run, scenario order
 
     results_dir = config.RUNS_DIR / "results"
     results_dir.mkdir(parents=True, exist_ok=True)
@@ -507,6 +535,8 @@ async def main(
         writer.writerows(rows)
 
     summary = summarise(rows, version)
+    if not judge:
+        summary += "\nJudge checks were skipped (--no-judge)."
     (results_dir / f"{stem}_summary.txt").write_text(summary + "\n", encoding="utf-8")
     print(f"\n{summary}\n\nResults: {csv_path}")
 
@@ -516,7 +546,7 @@ if __name__ == "__main__":
         description="Run the eval scenarios against one bot."
     )
     parser.add_argument("--version", required=True, choices=["v1", "v2"])
-    parser.add_argument("--scenario", help="run only the scenario with this id")
+    parser.add_argument("--scenario", nargs="+", help="run only these scenario ids")
     parser.add_argument(
         "--priority",
         choices=["core", "all"],
@@ -536,6 +566,17 @@ if __name__ == "__main__":
         help="seconds to wait before each customer turn (provider rate limit)",
     )
     parser.add_argument(
+        "--no-judge",
+        action="store_true",
+        help="skip the judge checks (tone, reason explored, handled as expected)",
+    )
+    parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=1,
+        help="how many calls to run at once (default 1: one after another)",
+    )
+    parser.add_argument(
         "--post-webhook",
         action="store_true",
         help="also POST each eval call's outcome to WEBHOOK_URL (off by default)",
@@ -549,5 +590,7 @@ if __name__ == "__main__":
             args.runs,
             args.pace,
             args.post_webhook,
+            not args.no_judge,
+            args.concurrency,
         )
     )

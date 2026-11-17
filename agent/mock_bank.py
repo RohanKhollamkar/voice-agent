@@ -3,7 +3,7 @@
 CUSTOMERS: dict[str, dict] = {
     # Balance well above ₹10,000: late fee applies.
     "C001": {
-        "name": "Asha Mehta",
+        "name": "Arjun Mehta",
         "phone": "+91 90000 00001",
         "outstanding_balance": 48_500,
         "minimum_due": 2_425,

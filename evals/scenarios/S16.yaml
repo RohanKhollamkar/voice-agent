@@ -1,7 +1,7 @@
 # S16 from docs/scenarios.csv. Format: see README.md in this folder.
 # Customer setup: Balance over ₹10,000. Gives the correct OTP.
 # Customer lines: "Can you waive the late fee?" (after the dues are stated). "OK, I'll pay the full amount on Friday." (after the bot says the waiver will be reviewed).
-# Added here, not in the CSV: the identity line and the goodbye.
+# Added here, not in the CSV: the identity line, the goodbye, and a "yes, that's right" reply to read-backs.
 id: S16
 title: "Asks for a waiver and also promises to pay"
 customer_id: C001
@@ -14,11 +14,13 @@ customer_turns:
     after_bot_has_said: "(₹|\\brs\\.?|\\binr)\\s?\\d|\\d\\s?rupees"
   - say: "OK, I'll pay the full amount on Friday."
     after_bot_says: "review|noted|call (you )?back|callback|human|agent|colleague"
-  - "Yes, that's right. Thank you, bye."
+  - "Thank you, bye."
 customer_replies:
   - when_bot_says: "\\bOTP\\b|one[- ]time|\\bcode\\b|passcode|\\bdigits\\b"
     say: "{otp}"
     after_tool: send_otp  # a code cannot be read out before it is sent
+  - when_bot_says: "(?=[\\s\\S]*(?:₹\\s?\\d|\\d\\s?rupees))(?=[\\s\\S]*(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|\\b\\d{1,2}(?:st|nd|rd|th)?\\s+(?:of\\s+)?(?:november|december|january)|\\b(?:november|december|january)\\s+\\d{1,2}))"
+    say: ["Yes, that's right.", "Yes, that's right.", "Yes, that's right."]
 expected:
   behaviour: >
     Does not approve the waiver. Records the promise to pay and logs the waiver for a
