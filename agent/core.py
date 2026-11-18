@@ -257,7 +257,19 @@ class Agent:
 
     async def start(self) -> str:
         """Open the call. Returns the bot's first line."""
-        return await self._reply_to(CALL_CONNECTED, speaker="call_connected")
+        if not self.state.guarded:  # v1: the model writes its own opening
+            return await self._reply_to(CALL_CONNECTED, speaker="call_connected")
+        # v2: a fixed line, so nothing about the card or the dues is said before the
+        # customer confirms who they are. It goes into the history as the bot's turn.
+        self._log(type="call_connected", text=CALL_CONNECTED)
+        started = time.perf_counter()
+        line = config.OPENING_LINE.format(
+            bot_name=config.BOT_NAME,
+            customer_name=mock_bank.get_customer(self.state.customer_id)["name"],
+        )
+        self.messages.append({"role": "user", "content": CALL_CONNECTED})
+        self.messages.append({"role": "assistant", "content": line})
+        return self._say([line], started, [])
 
     async def respond(self, customer_text: str) -> str:
         """Take what the customer said and return what the bot says back."""

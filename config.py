@@ -149,6 +149,13 @@ SARVAM_TTS_MODEL: str = _get_str("SARVAM_TTS_MODEL", "bulbul:v4-flash")
 SARVAM_TTS_VOICE: str = _get_str("SARVAM_TTS_VOICE", "ishita_en_customer")
 # The bot's name in both versions (v2's prompt and the line added to v1's).
 BOT_NAME: str = "Asha"
+# v2's first line, spoken by code rather than generated, so it can never mention the card
+# or the dues before the customer has confirmed who they are. v1 (the baseline) still
+# generates its own opening.
+OPENING_LINE: str = (
+    "Hello, this is {bot_name}, an automated assistant from Mumbai Bank. "
+    "Am I speaking with {customer_name}?"
+)
 # Default is "Sarah", an ElevenLabs premade voice. Premade voices work on the free
 # plan; voices from the ElevenLabs library need a paid plan to use over the API.
 ELEVENLABS_VOICE_ID: str = _get_str("ELEVENLABS_VOICE_ID", "EXAVITQu4vr4xnSDxMaL")

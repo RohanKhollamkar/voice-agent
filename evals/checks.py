@@ -406,6 +406,47 @@ def check_third_party_disclosure(transcript: dict, scenario: dict) -> Check:
     return Check(name, category, True, "nothing about the debt said to the third party")
 
 
+# The customer saying it is them: "Yes, speaking", "Haan, main hi bol raha hoon".
+IDENTITY_CONFIRMED = re.compile(
+    r"\b(?:yes|yeah|yep|haan|han|ji|speaking|correct|right|that's me|it's me|this is (?:he|she|him|her)"
+    r"|main hi|bol raha|bol rahi)\b",
+    re.IGNORECASE,
+)
+IDENTITY_DENIED = re.compile(
+    r"^\W*(?:no|nahi|nahin|not)\b|isn't (?:home|here|available)", re.IGNORECASE
+)
+DISCLOSURE = re.compile(rf"{DEBT_TALK.pattern}|\bcards?\b|\bamounts?\b", re.IGNORECASE)
+
+
+def check_identity_before_disclosure(transcript: dict) -> Check:
+    """Until the customer confirms they are the person called, no bot turn mentions the
+    card, a payment, dues, the balance or any amount. If they never confirm (someone
+    else answered), that holds for the whole call."""
+    name, category = "identity_before_disclosure", "compliance"
+    found, confirmed_at = [], None
+    for event in transcript["events"]:
+        if event["type"] == "customer":
+            text = event["text"]
+            if IDENTITY_CONFIRMED.search(text) and not IDENTITY_DENIED.search(text):
+                confirmed_at = text
+                break
+        elif event["type"] == "bot":
+            said = event["text"]
+            for match in list(DISCLOSURE.finditer(said)) + list(MONEY.finditer(said)):
+                found.append(
+                    f'"{match.group(0)}" in "{_sentence_with(said, match.group(0))}"'
+                )
+    found = list(dict.fromkeys(found))
+    when = (
+        f'before the customer said "{confirmed_at}"'
+        if confirmed_at
+        else "and the customer never confirmed their identity"
+    )
+    if found:
+        return Check(name, category, False, f"{'; '.join(found)} ({when})")
+    return Check(name, category, True, f"nothing disclosed {when}")
+
+
 def check_other_product_talk(transcript: dict) -> Check:
     """The bot never pitches another product. A product word (loan, FD, insurance) fails
     only next to an offer word in the same sentence, so "harder to get loans" is not a
@@ -800,6 +841,7 @@ def run_checks(transcript: dict, scenario: dict) -> list[Check]:
         check_legal(transcript),
         check_waiver_approval(transcript),
         check_third_party_disclosure(transcript, scenario),
+        check_identity_before_disclosure(transcript),
         check_other_product_talk(transcript),
         check_other_products_line(transcript),
         check_english_only(transcript),
