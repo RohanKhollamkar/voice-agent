@@ -253,6 +253,32 @@ Wrap the agent core in a Pipecat voice pipeline in voice/pipeline.py, reusing th
 Commit as "Voice pipeline".
 ```
 
+### Stage 5b: Demo console
+
+```
+Build a single demo page for live calls, time-boxed to 2 hours. Plain HTML, CSS and JavaScript in one file, no frontend framework or build step, served by the same server as the browser call mode.
+
+Start it with: python -m voice.demo → http://localhost:7860/demo
+
+Controls (top bar)
+- Customer (from mock_bank), bot version (v1 / v2), mode (Voice / Text), Start call, End call.
+- Voice mode uses the browser connection from --echo browser, so echo cancellation and barge-in work. Text mode shows an input box to type the customer's turns and uses no speech credits.
+
+Three panes, updating live
+1. Conversation: customer and bot turns as they happen, with the per-turn latency as a small label on each bot turn. Show the call timer with the 2:30 and 3:00 marks.
+2. Behind the scenes: every tool call with its arguments and result (send_otp, verify_otp, get_account_summary, record_outcome), and every guardrail action (forced transfer, nudge, blocked sentence, time-limit close, date note added), in order, with timestamps.
+3. Outcome: the outcome JSON, pretty-printed, as soon as it is recorded, whether it came from the bot or from after-call extraction, and the webhook delivery status (HTTP code). Before the outcome, show "No outcome yet".
+
+Rules
+- Feed all three panes from the events the agent core already writes to the transcript log. Add one small event stream (server-sent events or the existing data channel) that publishes each event as it is logged. Do not duplicate any agent logic in the page.
+- The page only displays and starts or ends calls; it changes nothing about how the bot behaves.
+- Local use only: bind to localhost.
+- Keep it clean and readable at laptop width; it will be screen-shared in the interview.
+
+Test it yourself in Text mode with Playwright: run S01-style turns through the page, confirm the three panes fill and the outcome JSON matches the transcript file, and send me a screenshot. I will test Voice mode on my laptop.
+Commit as "Demo console".
+```
+
 ### Stage 6: Repo polish
 
 ```
