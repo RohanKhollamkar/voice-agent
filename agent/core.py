@@ -7,7 +7,8 @@ to runs/transcripts/<call_id>.json after every turn.
 v1 is the bank's prompt with no guardrails. v2 adds the code guardrails in
 agent/guardrails.py: a reply check before anything is spoken, a transfer trigger
 on the customer's words, a call timer, a closing line built from the recorded
-outcome, and one coherent reply per turn.
+outcome, and one coherent reply per turn. Dates the customer mentions are resolved
+in code (agent/dates.py) and added to their turn as a note.
 """
 
 import json
@@ -22,6 +23,7 @@ from openai import AsyncOpenAI, OpenAIError
 
 import config
 from agent import mock_bank
+from agent.dates import date_notes
 from agent.guardrails import (
     GOODBYE,
     check_reply,
@@ -201,10 +203,15 @@ class Agent:
             if self.state.guarded:
                 if self._forced_outcome(text):
                     return self._say([self._closing()], started, [], closing=True)
+                # Dates the customer mentions, resolved in code: "[Friday = ...]".
+                notes = date_notes(text, self.state.started_at.date())
+                if notes:
+                    content = f"{text} {' '.join(notes)}"
+                    self._log(type="date_note", notes=notes)
                 late = self.elapsed_seconds() >= config.CALL_CLOSE_WARNING_SECONDS
                 if late and not self.time_note_sent:
                     self.time_note_sent = True
-                    content = f"{text}\n\n{TIME_NOTE}"
+                    content = f"{content}\n\n{TIME_NOTE}"
                     self._log(
                         type="timer_note", at_spoken_seconds=self.elapsed_seconds()
                     )

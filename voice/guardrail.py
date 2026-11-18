@@ -29,9 +29,7 @@ class ReplyCheckStep(FrameProcessor):
             text, blocks = check_reply(frame.text, self.agent.allowed_numbers, verified)
             for block in blocks:
                 logger.warning(f"Reply check blocked: {block}")
-                self.agent.events.append(
-                    {"type": "guardrail_block", "step": "voice", **block}
-                )
+                self.agent._log(type="guardrail_block", step="voice", **block)
             if blocks:
                 frame = LLMTextFrame(text=text + " ")
         await self.push_frame(frame, direction)

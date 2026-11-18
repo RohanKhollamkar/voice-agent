@@ -21,10 +21,28 @@ config.py     settings loaded from .env
 agent/        agent core: prompts, tools, outcome, mocked bank (no audio code)
 voice/        Pipecat pipeline around the agent core
 evals/        text-mode eval harness
-scripts/      spike scripts
+scripts/      the voice spike, the LLM latency check, and the voice test
 runs/         transcripts, outcomes, recordings, results (created at run time, not committed)
 ```
 
 ## Running
 
-To be written as the stages land.
+The full guide is written in the last stage. For now:
+
+### Voice test without a microphone
+
+`scripts/voice_test.py` runs a whole voice call with no mic or speaker. A scripted customer (identity, the OTP, a promise to pay, a yes to the read-back) is synthesized and played into the real pipeline in real time: Sarvam speech-to-text, the agent, the reply check, the normaliser and speech. It prints the call, its outcome and the latency of each stage per turn, and saves the transcript and a WAV recording as any voice call does.
+
+```bash
+python -m scripts.voice_test
+```
+
+```bash
+python -m scripts.voice_test --barge-in
+```
+
+```bash
+python -m scripts.voice_test --otp-pause 0.8
+```
+
+`--barge-in` speaks the promise over the bot, to test interruptions. `--otp-pause` reads the OTP in two halves with a pause, to test that it still arrives as one code. Turn-taking settings can be tried from the environment, for example `SARVAM_STT_SILENCE_MS=500 python -m scripts.voice_test`; see `docs/results/latency.md`. It needs the Sarvam, ElevenLabs and NVIDIA keys; if ElevenLabs refuses (its free plan has a monthly quota), the customer speaks with a Sarvam voice, and `TTS_PROVIDER=sarvam` moves the bot to Sarvam too.

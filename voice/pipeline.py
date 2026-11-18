@@ -11,10 +11,13 @@ runs/recordings/<call_id>.wav (customer on the left, bot on the right).
 """
 
 import asyncio
+import re
+import time
 import wave
 
 from loguru import logger
 from pipecat.audio.vad.silero import SileroVADAnalyzer
+from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.frames.frames import (
     BotStartedSpeakingFrame,
     BotStoppedSpeakingFrame,
@@ -26,6 +29,7 @@ from pipecat.frames.frames import (
     LLMFullResponseStartFrame,
     LLMTextFrame,
     StartFrame,
+    TTSSpeakFrame,
 )
 from pipecat.observers.user_bot_latency_observer import (
     LatencyBreakdown,
@@ -42,9 +46,14 @@ from pipecat.processors.audio.audio_buffer_processor import AudioBufferProcessor
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.services.sarvam.stt import SarvamRealtimeSTTService
 from pipecat.transports.base_transport import BaseTransport
+from pipecat.turns.user_stop.speech_timeout_user_turn_stop_strategy import (
+    SpeechTimeoutUserTurnStopStrategy,
+)
+from pipecat.turns.user_turn_strategies import UserTurnStrategies
 from pipecat.workers.runner import WorkerRunner
 
 import config
+from agent import mock_bank
 from agent.core import Agent
 from voice.guardrail import ReplyCheckStep
 from voice.normaliser import speakable
@@ -52,6 +61,8 @@ from voice.tts import make_tts
 
 # After the closing line, how long to wait for the bot to finish saying it.
 CLOSING_WAIT_SECONDS = 20
+# How long to wait for the rest of a code read out in parts ("482" ... "913").
+CODE_JOIN_SECONDS = 4.0
 
 
 class AgentStep(FrameProcessor):
@@ -75,6 +86,9 @@ class AgentStep(FrameProcessor):
         self._seen_messages = 0
         self._closing_started = False
         self._closing_spoken = asyncio.Event()
+        self._held: list[
+            str | None
+        ] = []  # a turn taken out of the queue but not yet used
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
@@ -97,6 +111,57 @@ class AgentStep(FrameProcessor):
             self._worker = None
         await self.push_frame(frame, direction)
 
+    async def _next_turn(self) -> str | None:
+        return self._held.pop(0) if self._held else await self._turns.get()
+
+    def _is_code_part(self, text: str | None) -> bool:
+        """Only digits, fewer than the OTP has, while the bot is waiting for the OTP."""
+        state = self.agent.state
+        if text is None or not state.otp_sent or state.otp_verified:
+            return False
+        digits, rest = re.sub(r"\D", "", text), re.sub(r"[\d\s.,-]", "", text)
+        otp_length = len(mock_bank.get_customer(state.customer_id)["otp"])
+        return bool(digits) and not rest and len(digits) < otp_length
+
+    async def _join_code_parts(self, text: str | None) -> str | None:
+        """A customer reading out the OTP may pause between digits, and the pause can
+        end the turn early ("482", then "913"). The first part would count as a wrong
+        code, and two wrong codes end the call. So while the bot is waiting for the OTP,
+        a turn that is only part of a code waits up to CODE_JOIN_SECONDS for the rest."""
+        while self._is_code_part(text):
+            try:
+                more = await asyncio.wait_for(self._next_turn(), CODE_JOIN_SECONDS)
+            except TimeoutError:
+                break
+            if more is None or re.sub(r"[\d\s.,-]", "", more):  # not more digits
+                self._held.insert(0, more)
+                break
+            self.agent._log(type="voice_code_joined", parts=[text, more])
+            text = f"{text} {more}"
+        return text
+
+    async def _answer(self, text: str | None) -> str:
+        """The agent's reply. If it takes longer than VOICE_ACK_AFTER_SECONDS, say a
+        holding line first. "One moment." commits to nothing, so it cannot contradict
+        whatever follows (an "Okay." could, before a refusal)."""
+        started = time.monotonic()
+        work = asyncio.ensure_future(
+            self.agent.start() if text is None else self.agent.respond(text)
+        )
+        wait = config.VOICE_ACK_AFTER_SECONDS
+        if wait and text is not None:
+            done, _ = await asyncio.wait({work}, timeout=wait)
+            if not done:
+                # A speak frame goes straight to speech; text frames would wait in the
+                # speech service's sentence buffer until the reply arrived.
+                await self.push_frame(TTSSpeakFrame(text=config.VOICE_ACK_LINE))
+                self.agent._log(type="voice_ack", text=config.VOICE_ACK_LINE)
+        reply = await work
+        self.agent._log(
+            type="voice_agent_time", seconds=round(time.monotonic() - started, 3)
+        )
+        return reply
+
     def _new_user_turns(self, context: LLMContext) -> list[str]:
         """What the customer has said since the last turn handed to the agent."""
         messages = context.get_messages()
@@ -109,13 +174,13 @@ class AgentStep(FrameProcessor):
 
     async def _work(self):
         while True:
-            text = await self._turns.get()
+            text = await self._join_code_parts(await self._next_turn())
             if self.agent.ended:
                 continue  # the customer spoke after the call was closed
-            reply = await (
-                self.agent.start() if text is None else self.agent.respond(text)
-            )
+            # The response starts now, while the agent works: the latency observer
+            # times the agent from this frame to its first text.
             await self.push_frame(LLMFullResponseStartFrame())
+            reply = await self._answer(text)
             for utterance in reply.splitlines():
                 await self.push_frame(LLMTextFrame(text=utterance + " "))
             await self.push_frame(LLMFullResponseEndFrame())
@@ -171,20 +236,35 @@ async def run_call(
     agent = Agent(customer_id, version, clock="wall")  # the call timer uses real time
     transport = transport or make_local_transport()
 
+    stt_settings = SarvamRealtimeSTTService.Settings(
+        model=config.SARVAM_STT_MODEL,
+        language=None,  # detect per utterance: Hindi, English or a mix
+        mode=config.SARVAM_STT_MODE,
+        stream_type=config.SARVAM_STT_STREAM_TYPE,
+    )
+    if config.SARVAM_STT_SILENCE_MS:
+        stt_settings.silence_duration_ms = config.SARVAM_STT_SILENCE_MS
     stt = SarvamRealtimeSTTService(
         api_key=config.SARVAM_API_KEY,
-        settings=SarvamRealtimeSTTService.Settings(
-            model=config.SARVAM_STT_MODEL,
-            language=None,  # detect per utterance: Hindi, English or a mix
-            mode=config.SARVAM_STT_MODE,
-        ),
+        endpointing=config.STT_ENDPOINTING,
+        settings=stt_settings,
     )
-    # Turn detection: Sarvam's endpointing, timed by a local VAD. The same turn
+    # Turn detection. With "vad" endpointing Sarvam decides when the customer has
+    # finished, and the local VAD only times it. With "manual" the local VAD is the one
+    # end-of-speech signal: Sarvam is told when speech ends, and the turn ends once the
+    # transcript is in and USER_SPEECH_TIMEOUT has passed. Either way the same turn
     # handling interrupts the bot when the customer talks over it (barge-in).
-    user_turns, _ = LLMContextAggregatorPair(
-        LLMContext(),
-        user_params=LLMUserAggregatorParams(vad_analyzer=SileroVADAnalyzer()),
-    )
+    vad = SileroVADAnalyzer(params=VADParams(stop_secs=config.VAD_STOP_SECS))
+    user_params = LLMUserAggregatorParams(vad_analyzer=vad)
+    if config.STT_ENDPOINTING == "manual":
+        user_params.user_turn_strategies = UserTurnStrategies(
+            stop=[
+                SpeechTimeoutUserTurnStopStrategy(
+                    user_speech_timeout=config.USER_SPEECH_TIMEOUT
+                )
+            ]
+        )
+    user_turns, _ = LLMContextAggregatorPair(LLMContext(), user_params=user_params)
     agent_step = AgentStep(agent)
     recorder = AudioBufferProcessor(num_channels=2, auto_start_recording=True)
     recording_path = config.RUNS_DIR / "recordings" / f"{agent.state.call_id}.wav"
@@ -211,15 +291,17 @@ async def run_call(
 
     @latency.event_handler("on_latency_breakdown")
     async def on_latency_breakdown(_, breakdown: LatencyBreakdown):
-        # Per turn: time from the end of the customer's speech to the bot's first audio.
-        agent.events.append(
-            {
-                "type": "voice_latency",
-                "total_seconds": round(breakdown.total_secs, 3),
-                "parts": {
-                    c.label: round(c.duration_secs, 3) for c in breakdown.contributions
-                },
-            }
+        # Per turn: time from the end of the customer's speech to the bot's first audio,
+        # by stage. The agent's own time (model calls and tools) is the part the
+        # observer cannot name, between the response starting and the first text.
+        parts: dict[str, float] = {}
+        for part in breakdown.contributions:
+            parts[part.label] = round(parts.get(part.label, 0) + part.duration_secs, 3)
+        agent._log(
+            type="voice_latency",
+            measured_from=str(breakdown.measured_from),
+            total_seconds=round(breakdown.total_secs, 3),
+            parts=parts,
         )
         for line in breakdown.turn_contribution_lines():
             logger.info(line)
@@ -237,6 +319,6 @@ async def run_call(
         await runner.run()
     finally:
         # However the call ended (closing line, hang-up, Ctrl+C), settle the outcome.
-        agent.events.append({"type": "recording", "path": recording_path.as_posix()})
+        agent._log(type="recording", path=recording_path.as_posix())
         outcome = await agent.finish()
     return outcome

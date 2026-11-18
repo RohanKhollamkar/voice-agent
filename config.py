@@ -45,6 +45,29 @@ SARVAM_STT_MODEL: str = _get_str("SARVAM_STT_MODEL", "saaras:v3-realtime")
 # transcribe | codemix | translit | verbatim | translate
 SARVAM_STT_MODE: str = _get_str("SARVAM_STT_MODE", "codemix")
 ELEVENLABS_MODEL: str = _get_str("ELEVENLABS_MODEL", "eleven_flash_v2_5")
+
+# Voice turn-taking (latency). Defaults are the settings the measurements chose; see
+# docs/results/latency.md.
+# vad: Sarvam's own end-of-speech detection ends the turn. manual: the local VAD is the
+# only end-of-speech signal; Sarvam is told when speech ends.
+STT_ENDPOINTING: str = _get_str("STT_ENDPOINTING", "vad")
+SARVAM_STT_STREAM_TYPE: str = _get_str(
+    "SARVAM_STT_STREAM_TYPE", "balanced"
+)  # fast | balanced
+# Sarvam waits this long in silence before ending the customer's turn. 700 ms was
+# measured faster than Sarvam's default (about 0.35 s per turn) and still keeps a code
+# read with pauses together (with the joining in voice/pipeline.py); 300-500 ms split it.
+SARVAM_STT_SILENCE_MS: int | None = (
+    int(os.getenv("SARVAM_STT_SILENCE_MS") or 700) or None
+)
+VAD_STOP_SECS: float = float(os.getenv("VAD_STOP_SECS") or 0.2)  # local VAD silence
+USER_SPEECH_TIMEOUT: float = float(
+    os.getenv("USER_SPEECH_TIMEOUT") or 0.6
+)  # manual mode
+# Say a short holding line if the agent has not answered within this many seconds
+# (0 turns it off).
+VOICE_ACK_AFTER_SECONDS: float = float(os.getenv("VOICE_ACK_AFTER_SECONDS") or 1.5)
+VOICE_ACK_LINE: str = "One moment."
 # The alternative speech service (TTS_PROVIDER=sarvam). An empty voice uses the model's default.
 SARVAM_TTS_MODEL: str = _get_str("SARVAM_TTS_MODEL", "bulbul:v4-flash")
 SARVAM_TTS_VOICE: str = _get_str("SARVAM_TTS_VOICE")
