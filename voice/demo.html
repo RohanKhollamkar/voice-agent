@@ -322,7 +322,8 @@ const GUARD = {
   action_nudge: "Nudge: call the tool", date_note: "Date note added", timer_note: "Time note (2:30)",
   discarded_text: "Discarded text", extraction_rejected: "Extraction rejected",
   post_call_extraction: "After-call extraction", voice_code_joined: "Code parts joined",
-  voice_ack: "Holding line", llm_error: "Model error",
+  voice_ack: "Holding line", llm_error: "Model error", ignored_noise: "Ignored noise",
+  voice_turn_joined: "Turn parts joined (after barge-in)",
 };
 function addEvent(e) {
   const box = clearEmpty("behind");
@@ -337,7 +338,8 @@ function addEvent(e) {
     }
     skip.add("name"); skip.add("recorded_by");
   } else if (["guardrail_block", "outcome_nudge", "action_nudge", "date_note", "timer_note",
-              "discarded_text", "extraction_rejected", "voice_code_joined", "voice_ack"].includes(e.type)) {
+              "discarded_text", "extraction_rejected", "voice_code_joined", "voice_ack",
+              "ignored_noise", "voice_turn_joined"].includes(e.type)) {
     kind = "guard"; tag = "guardrail";
   } else if (e.type === "llm_error") { kind = "error"; tag = "error"; }
   if (e.type === "action_nudge") title += ` (${e.tool})`;

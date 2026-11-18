@@ -114,6 +114,32 @@ CLAIMED_WHAT = {
 }
 
 
+# v2: text before a tool call that only announces the action ("Let me send a code.",
+# "One moment, I'll check your account."): every sentence is an announcement or a
+# filler. When the turn has more to say after the tool, the announcement is dropped,
+# so the customer hears what happened, not what is about to.
+ANNOUNCEMENT = re.compile(
+    r"^(?:(?:okay|ok|sure|alright|great|thank you|thanks),?\s+)?(?:let me|let's|i'll|i will|i'm going to|i am going to|allow me to|one moment"
+    r"|just a moment|please hold|give me a (?:moment|second))\b",
+    re.IGNORECASE,
+)
+FILLER = re.compile(
+    r"^(?:thank you|thanks|okay|ok|sure|great|alright|all right|got it)\b[^.?!]{0,20}$",
+    re.IGNORECASE,
+)
+
+
+def only_announces(text: str) -> bool:
+    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
+    return (
+        bool(sentences)
+        and all(
+            ANNOUNCEMENT.match(s) or FILLER.match(s.rstrip(".!")) for s in sentences
+        )
+        and any(ANNOUNCEMENT.match(s) for s in sentences)
+    )
+
+
 # Some models write their thinking inline, wrapped in <think> tags. An unclosed
 # tag means the reply was cut off mid-thought, so everything after it goes too.
 THINKING = re.compile(r"<think>.*?(</think>|$)", re.DOTALL)
@@ -147,7 +173,7 @@ def build_system_prompt(version: str, customer: dict) -> str:
     """The version's prompt file, with the facts of this call.
 
     v1 gets the account appended, because its prompt says it knows the account. v2's
-    prompt has {today}, {upcoming_dates} and {customer_name} filled in and nothing else:
+    prompt has {bot_name}, {today}, {upcoming_dates} and {customer_name} filled in:
     it gets the account only from get_account_summary, after OTP."""
     prompt_path = PROMPTS_DIR / f"{version}.md"
     prompt = prompt_path.read_text(encoding="utf-8").strip()
@@ -157,13 +183,15 @@ def build_system_prompt(version: str, customer: dict) -> str:
         )
     if version != "v1":
         return (
-            prompt.replace("{today}", spoken_day(now().date(), with_iso=True))
+            prompt.replace("{bot_name}", config.BOT_NAME)
+            .replace("{today}", spoken_day(now().date(), with_iso=True))
             .replace("{upcoming_dates}", upcoming_dates(now().date()))
             .replace("{customer_name}", customer["name"])
         )
 
     context = [
         "Call context:",
+        f"- Your name is {config.BOT_NAME}.",  # the same name as v2's
         f"- Today is {now():%A, %Y-%m-%d}.",
         f"- You are calling {customer['name']}.",
     ]
@@ -342,7 +370,12 @@ class Agent:
             return [self._closing()]
         verified = self.state.otp_verified or not config.ENFORCE_OTP
         utterances = []
-        for piece, index in pieces:
+        for number, (piece, index) in enumerate(pieces):
+            before_tool = bool(self.messages[index].get("tool_calls"))
+            if before_tool and number < len(pieces) - 1 and only_announces(piece):
+                self.messages[index]["content"] = ""
+                self._log(type="discarded_text", text=piece, reason="announcement")
+                continue
             reply, blocks = check_reply(piece, self.allowed_numbers, verified)
             for block in blocks:
                 self._log(type="guardrail_block", **block)
