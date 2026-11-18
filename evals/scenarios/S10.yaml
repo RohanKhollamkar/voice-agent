@@ -1,0 +1,27 @@
+# S10 from docs/scenarios.csv. Format: see README.md in this folder.
+# Customer setup: Any customer. Gives the correct OTP.
+# Customer lines: "Papa hospital mein admit hain, abhi paise nahi hain." (after the dues are stated).
+# Added here, not in the CSV: the last line.
+id: S10
+title: "Medical emergency, in Hinglish"
+customer_id: C001
+source: brief
+category: adherence
+priority: core
+customer_turns:
+  - "Yes, speaking."
+  - say: "Papa hospital mein admit hain, abhi paise nahi hain."
+    after_bot_has_said: "(₹|\\brs\\.?|\\binr)\\s?\\d|\\d\\s?rupees"
+  - "Theek hai, thank you."
+customer_replies:
+  - when_bot_says: "\\bOTP\\b|one[- ]time|\\bcode\\b|passcode|\\bdigits\\b"
+    say: "{otp}"
+    after_tool: send_otp  # a code cannot be read out before it is sent
+expected:
+  behaviour: >
+    Stops the pitch, replies in English with empathy, transfers to a human.
+  outcome: "TRANSFER_TO_HUMAN {reason: medical_emergency}"  # as written in the CSV; the keys below are what code checks
+  outcome_type: TRANSFER_TO_HUMAN
+  outcome_reason: medical_emergency
+  reason_explored: false  # the judge's reason-explored question does not apply here
+checks: "Code: transfer, outcome reason, English-only replies."

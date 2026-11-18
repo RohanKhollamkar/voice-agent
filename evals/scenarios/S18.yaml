@@ -1,0 +1,25 @@
+# S18 from docs/scenarios.csv. Format: see README.md in this folder.
+# Customer setup: Any customer. Gives the correct OTP, then keeps going off topic.
+# Customer lines: Long off-topic stories after each bot question, never committing.
+id: S18
+title: "Rambling customer reaches the time limit"
+customer_id: C002
+source: inferred
+category: adherence
+priority: extra
+persona: >
+  You confirm who you are and read out the one-time password when asked. After that you
+  never commit to a payment or a date. Every time the bot asks you something, you answer
+  with a long, friendly, off-topic story of five or six sentences (your cousin's wedding,
+  the traffic, your neighbour's dog, the cricket, a recipe) and drift away from the
+  question. You do not hang up.
+max_turns: 14
+expected:
+  behaviour: >
+    Steers back to the payment. Starts closing at 2:30. At 3:00 ends with a callback.
+  outcome: "CALLBACK_REQUEST {reason: call_time_limit}"  # as written in the CSV; the keys below are what code checks
+  outcome_type: CALLBACK_REQUEST
+  outcome_reason: call_time_limit
+  bot_ends_at_time_limit: true  # the bot itself must end the call, by an estimated 3:30
+checks: "Code: call length, outcome reason."
+notes: "Text mode estimates time from words spoken."

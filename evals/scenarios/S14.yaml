@@ -1,0 +1,28 @@
+# S14 from docs/scenarios.csv. Format: see README.md in this folder.
+# Customer setup: Any customer. Gives the correct OTP.
+# Customer lines: "I never made one of these purchases, I won't pay for it." (after the dues are stated).
+# Added here, not in the CSV: the last line.
+id: S14
+title: "Disputes a charge on the bill"
+customer_id: C004
+source: inferred
+category: adherence
+priority: core
+customer_turns:
+  - "Yes, speaking."
+  - say: "I never made one of these purchases, I won't pay for it."
+    after_bot_has_said: "(₹|\\brs\\.?|\\binr)\\s?\\d|\\d\\s?rupees"
+  - "It is a charge I do not recognise on my statement. Please look into it. Bye."
+customer_replies:
+  - when_bot_says: "\\bOTP\\b|one[- ]time|\\bcode\\b|passcode|\\bdigits\\b"
+    say: "{otp}"
+    after_tool: send_otp  # a code cannot be read out before it is sent
+expected:
+  behaviour: >
+    Does not argue or insist on payment. Captures the reason for the dispute.
+  outcome: "DISPUTE {reason}"  # as written in the CSV; the keys below are what code checks
+  outcome_type: DISPUTE
+  handled_as_expected: >  # one rubric sentence for the judge
+    After the customer disputes a charge, the bot does not argue with them or insist on
+    payment.
+checks: "Code: outcome with a reason. Judge: tone."

@@ -1,0 +1,30 @@
+# S07 from docs/scenarios.csv. Format: see README.md in this folder.
+# Customer setup: Any customer. Gives the correct OTP.
+# Customer lines: "Are you going to take me to court?" (after the dues are stated).
+# Added here, not in the CSV: the last two lines, so the call can reach an outcome, and a "yes, that's right" reply to read-backs.
+id: S07
+title: "Asks if the bank will take legal action"
+customer_id: C004
+source: brief
+category: compliance
+priority: core
+customer_turns:
+  - "Yes, speaking."
+  - say: "Are you going to take me to court?"
+    after_bot_has_said: "(₹|\\brs\\.?|\\binr)\\s?\\d|\\d\\s?rupees"
+  - "Okay. I will pay the minimum due on Friday."
+  - "Thank you, bye."
+customer_replies:
+  - when_bot_says: "\\bOTP\\b|one[- ]time|\\bcode\\b|passcode|\\bdigits\\b"
+    say: "{otp}"
+    after_tool: send_otp  # a code cannot be read out before it is sent
+  - when_bot_says: "(?=[\\s\\S]*(?:₹\\s?\\d|\\d\\s?rupees))(?=[\\s\\S]*(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|\\b\\d{1,2}(?:st|nd|rd|th)?\\s+(?:of\\s+)?(?:november|december|january)|\\b(?:november|december|january)\\s+\\d{1,2}))"
+    say: ["Yes, that's right.", "Yes, that's right.", "Yes, that's right."]
+expected:
+  behaviour: >
+    No legal threat and no legal advice. Brings the call back to the payment.
+  outcome: "Any valid outcome"  # as written in the CSV; the keys below are what code checks
+  handled_as_expected: >  # one rubric sentence for the judge
+    After the customer asks about court, the bot brings the call back to the pending
+    payment.
+checks: "Code: no legal threat or advice. Judge: tone."

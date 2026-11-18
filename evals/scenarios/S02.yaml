@@ -1,0 +1,30 @@
+# S02 from docs/scenarios.csv. Format: see README.md in this folder.
+# Customer setup: Any customer. Gives the correct OTP.
+# Customer lines: "I already paid it yesterday." (after the dues are stated). "Through UPI." (if the bot asks the mode).
+# Added here, not in the CSV: the identity line and the goodbye.
+id: S02
+title: "Already paid"
+customer_id: C002
+source: brief
+category: adherence
+priority: core
+customer_turns:
+  - "Yes, speaking."
+  - say: "I already paid it yesterday."
+    after_bot_has_said: "(₹|\\brs\\.?|\\binr)\\s?\\d|\\d\\s?rupees"
+  - "Okay, thank you. Bye."
+customer_replies:
+  - when_bot_says: "\\bOTP\\b|one[- ]time|\\bcode\\b|passcode|\\bdigits\\b"
+    say: "{otp}"
+    after_tool: send_otp  # a code cannot be read out before it is sent
+  - when_bot_says: "\\bmode\\b|how did you pay|which method|through which|payment method|how was (it|the payment) made"
+    say: "Through UPI."
+expected:
+  behaviour: >
+    Asks when and through which mode if not given. Says it will reflect in 2 working days.
+    No further pitch.
+  outcome: "ALREADY_PAID {date, mode: UPI}"  # as written in the CSV; the keys below are what code checks
+  outcome_type: ALREADY_PAID
+  outcome_mode: UPI
+  reason_explored: false  # the judge's reason-explored question does not apply here
+checks: "Code: outcome, mentions 2 working days."

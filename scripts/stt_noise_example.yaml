@@ -1,0 +1,16 @@
+# Example input for scripts/stt_noise_test.py. One entry per recorded call: the
+# transcript it wrote, and the customer's lines in the order they were spoken.
+# The transcripts below are from voice_test runs on this machine (runs/ is not
+# committed); replace them with your own calls.
+- transcript: runs/transcripts/c35bf23d-12d0-4888-9aca-c3759e3acaa4.json
+  said:
+    - "Yes, speaking."
+    - "four eight two nine one three"
+    - "I will pay the full amount on Friday."
+    - "Yes, that's right."
+- transcript: runs/transcripts/cffda1d0-1469-4ca1-8495-bfe25ef8b581.json
+  said:
+    - "Yes, speaking."
+    - "482913"
+    - "I will pay the full amount on Friday."
+    - "Yes, that's right."

@@ -1,13 +1,17 @@
 # Extras verified against pipecat-ai 1.16.0 on PyPI:
-#   sarvam      Sarvam speech-to-text (and Bulbul speech as the alternative TTS)
+#   sarvam      Sarvam speech-to-text and Bulbul speech (the default speech service)
 #   elevenlabs  ElevenLabs speech
 #   nvidia      NVIDIA API language model service
 #   local       local mic and speaker transport (PyAudio; needs the PortAudio system library)
+#   webrtc, runner  the browser connection for voice.call --echo browser
 # Silero VAD and python-dotenv ship with the pipecat-ai core package.
-pipecat-ai[sarvam,elevenlabs,nvidia,local]>=1.16,<2
+pipecat-ai[sarvam,elevenlabs,nvidia,local,webrtc,runner]>=1.16,<2
 
 # Outcome webhook POST
 httpx
+
+# Numbers to words for speech (voice/normaliser.py)
+num2words
 
 # Eval scenario files
 pyyaml
