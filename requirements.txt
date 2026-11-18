@@ -9,6 +9,9 @@ pipecat-ai[sarvam,elevenlabs,nvidia,local]>=1.16,<2
 # Outcome webhook POST
 httpx
 
+# Numbers to words for speech (voice/normaliser.py)
+num2words
+
 # Eval scenario files
 pyyaml
 

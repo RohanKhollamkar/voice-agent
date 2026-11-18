@@ -45,6 +45,9 @@ SARVAM_STT_MODEL: str = _get_str("SARVAM_STT_MODEL", "saaras:v3-realtime")
 # transcribe | codemix | translit | verbatim | translate
 SARVAM_STT_MODE: str = _get_str("SARVAM_STT_MODE", "codemix")
 ELEVENLABS_MODEL: str = _get_str("ELEVENLABS_MODEL", "eleven_flash_v2_5")
+# The alternative speech service (TTS_PROVIDER=sarvam). An empty voice uses the model's default.
+SARVAM_TTS_MODEL: str = _get_str("SARVAM_TTS_MODEL", "bulbul:v4-flash")
+SARVAM_TTS_VOICE: str = _get_str("SARVAM_TTS_VOICE")
 # Default is "Sarah", an ElevenLabs premade voice. Premade voices work on the free
 # plan; voices from the ElevenLabs library need a paid plan to use over the API.
 ELEVENLABS_VOICE_ID: str = _get_str("ELEVENLABS_VOICE_ID", "EXAVITQu4vr4xnSDxMaL")
