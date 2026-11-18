@@ -267,11 +267,14 @@ async def run_call(
     transport: BaseTransport | None = None,
     echo: str = "none",
     handle_sigint: bool = True,
+    agent: Agent | None = None,
 ) -> dict:
     """Run one voice call to the end and return its outcome. The transport defaults to
     the local mic and speaker; a test or the browser connection can pass another.
-    echo="half-duplex" mutes the mic while the bot speaks (see MicGate)."""
-    agent = Agent(customer_id, version, clock="wall")  # the call timer uses real time
+    echo="half-duplex" mutes the mic while the bot speaks (see MicGate). A caller that
+    needs the agent before the call starts (the demo console) can pass its own."""
+    # The call timer uses real time.
+    agent = agent or Agent(customer_id, version, clock="wall")
     transport = transport or make_local_transport()
 
     stt_settings = SarvamRealtimeSTTService.Settings(
@@ -351,6 +354,12 @@ async def run_call(
         observers=[latency],
     )
     agent_step.end_call = worker.stop_when_done
+
+    if "on_client_disconnected" in getattr(transport, "_event_handlers", {}):
+        # Browser connection: the customer closed the page or pressed End call.
+        @transport.event_handler("on_client_disconnected")
+        async def on_client_disconnected(*_):
+            await worker.cancel()
 
     runner = WorkerRunner(handle_sigint=handle_sigint)
     await runner.add_workers(worker)

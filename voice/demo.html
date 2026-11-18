@@ -1,0 +1,437 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Collections Demo Console</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --panel: #ffffff; --line: #e3e6eb; --text: #1d2430; --muted: #6b7380;
+    --accent: #1f5fbf; --accent-soft: #e8f0fc; --bot: #eef1f5; --cust: #1f5fbf;
+    --ok: #1d7a46; --ok-soft: #e5f4ec; --warn: #a86200; --warn-soft: #fdf1df;
+    --bad: #b3261e; --bad-soft: #fbe9e7; --guard: #6b3fb5; --guard-soft: #f1ebfb;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    display: flex; flex-direction: column;
+  }
+
+  /* Top bar */
+  header {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line);
+  }
+  header h1 { font-size: 15px; margin: 0 8px 0 0; white-space: nowrap; }
+  header h1 span { color: var(--muted); font-weight: 500; }
+  label.field { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; }
+  select, input[type=text] {
+    font: inherit; color: var(--text); background: var(--panel);
+    border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px;
+  }
+  .segmented { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .segmented button { border: 0; border-radius: 0; background: var(--panel); color: var(--muted); padding: 5px 12px; }
+  .segmented button.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  button {
+    font: inherit; cursor: pointer; border-radius: 6px; padding: 6px 14px;
+    border: 1px solid var(--line); background: var(--panel); color: var(--text);
+  }
+  button:disabled { opacity: .45; cursor: default; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  button.danger { color: var(--bad); border-color: #e7b9b5; font-weight: 600; }
+  .spacer { flex: 1; }
+  .status { font-size: 13px; color: var(--muted); white-space: nowrap; }
+  .status b { color: var(--text); }
+
+  /* Panes */
+  main {
+    flex: 1; min-height: 0; display: grid; gap: 12px; padding: 12px 16px 16px;
+    grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr) minmax(0, .9fr);
+  }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; display: flex; flex-direction: column; min-height: 0; }
+  section > h2 {
+    margin: 0; padding: 10px 14px; font-size: 13px; letter-spacing: .02em; text-transform: uppercase;
+    color: var(--muted); border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 8px;
+  }
+  section > h2 .count { margin-left: auto; text-transform: none; letter-spacing: 0; font-weight: 500; }
+  .scroll { flex: 1; overflow-y: auto; padding: 12px 14px; }
+  .empty { color: var(--muted); text-align: center; margin-top: 40px; }
+
+  /* Timer */
+  .timer { padding: 10px 14px 12px; border-bottom: 1px solid var(--line); }
+  .timer-row { display: flex; align-items: baseline; gap: 10px; }
+  .clock { font: 600 22px var(--mono); }
+  .clock-note { color: var(--muted); font-size: 12px; }
+  .bar { position: relative; height: 8px; background: var(--bot); border-radius: 4px; margin: 8px 0 16px; }
+  .bar .fill { position: absolute; inset: 0 auto 0 0; width: 0; background: var(--accent); border-radius: 4px; transition: width .3s; }
+  .bar .fill.late { background: var(--warn); }
+  .bar .fill.over { background: var(--bad); }
+  .mark { position: absolute; top: -3px; height: 14px; border-left: 2px solid var(--muted); }
+  .mark span { position: absolute; top: 15px; left: -14px; font: 11px var(--mono); color: var(--muted); white-space: nowrap; }
+
+  /* Conversation */
+  .turn { display: flex; flex-direction: column; margin-bottom: 10px; max-width: 86%; }
+  .turn.bot { align-items: flex-start; }
+  .turn.customer { align-items: flex-end; margin-left: auto; }
+  .bubble { padding: 8px 12px; border-radius: 12px; white-space: pre-wrap; word-wrap: break-word; }
+  .bot .bubble { background: var(--bot); border-bottom-left-radius: 4px; }
+  .customer .bubble { background: var(--cust); color: #fff; border-bottom-right-radius: 4px; }
+  .meta { font-size: 11px; color: var(--muted); margin: 3px 4px 0; display: flex; gap: 6px; flex-wrap: wrap; }
+  .chip { font: 11px var(--mono); padding: 0 6px; border-radius: 9px; background: var(--accent-soft); color: var(--accent); }
+  .chip.slow { background: var(--warn-soft); color: var(--warn); }
+  .notice { text-align: center; color: var(--muted); font-size: 12px; margin: 6px 0 12px; }
+  .composer { display: flex; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--line); }
+  .composer input { flex: 1; }
+  .voice-hint { padding: 10px 14px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; display: flex; align-items: center; gap: 8px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+  .dot.live { background: var(--ok); box-shadow: 0 0 0 3px var(--ok-soft); }
+
+  /* Behind the scenes */
+  .event { border-left: 3px solid var(--line); padding: 4px 0 6px 10px; margin-bottom: 8px; }
+  .event .head { display: flex; gap: 8px; align-items: baseline; }
+  .event .time { font: 11px var(--mono); color: var(--muted); min-width: 44px; }
+  .event .title { font-weight: 600; }
+  .tag { font-size: 11px; padding: 0 6px; border-radius: 9px; font-weight: 600; }
+  .event.tool { border-color: var(--accent); }
+  .event.tool .tag { background: var(--accent-soft); color: var(--accent); }
+  .event.guard { border-color: var(--guard); }
+  .event.guard .tag { background: var(--guard-soft); color: var(--guard); }
+  .event.error { border-color: var(--bad); }
+  .event.error .tag { background: var(--bad-soft); color: var(--bad); }
+  .event.info { border-color: var(--line); }
+  .event.info .tag { background: var(--bot); color: var(--muted); }
+  .kv { margin: 3px 0 0 52px; font: 12px/1.5 var(--mono); color: #3b4452; }
+  .kv div { white-space: pre-wrap; word-break: break-word; }
+  .kv .k { color: var(--muted); }
+
+  .legend { padding: 6px 14px; font-size: 12px; color: var(--muted); border-bottom: 1px solid var(--line); }
+  .t-tool { background: var(--accent-soft); color: var(--accent); }
+  .t-guard { background: var(--guard-soft); color: var(--guard); }
+
+  /* Outcome */
+  .badge { display: inline-block; font-weight: 700; padding: 3px 10px; border-radius: 6px; background: var(--ok-soft); color: var(--ok); margin-bottom: 8px; }
+  .sub { color: var(--muted); font-size: 12px; margin-bottom: 10px; }
+  pre.json { margin: 0; font: 12px/1.5 var(--mono); background: #f8f9fb; border: 1px solid var(--line); border-radius: 8px; padding: 10px; overflow-x: auto; white-space: pre-wrap; word-break: break-word; }
+  .json .key { color: #8a3ab9; } .json .str { color: #1d7a46; } .json .num { color: #b05a00; } .json .lit { color: #1f5fbf; }
+  .webhook { margin-top: 12px; padding: 8px 10px; border-radius: 8px; font-size: 13px; }
+  .webhook.ok { background: var(--ok-soft); color: var(--ok); }
+  .webhook.bad { background: var(--bad-soft); color: var(--bad); }
+  .webhook.wait { background: var(--bot); color: var(--muted); }
+
+  @media (max-width: 1000px) { main { grid-template-columns: 1fr; } section { min-height: 360px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Mumbai Bank <span>· collections demo console</span></h1>
+  <label class="field">Customer <select id="customer"></select></label>
+  <label class="field">Bot
+    <span class="segmented" id="version"><button data-v="v1">v1</button><button data-v="v2" class="on">v2</button></span>
+  </label>
+  <label class="field">Mode
+    <span class="segmented" id="mode"><button data-v="voice">Voice</button><button data-v="text" class="on">Text</button></span>
+  </label>
+  <button class="primary" id="start">Start call</button>
+  <button class="danger" id="end" disabled>End call</button>
+  <span class="spacer"></span>
+  <span class="status" id="status">No call</span>
+</header>
+
+<main>
+  <section>
+    <h2>Conversation</h2>
+    <div class="timer">
+      <div class="timer-row"><span class="clock" id="clock">0:00</span><span class="clock-note" id="clock-note"></span></div>
+      <div class="bar"><div class="fill" id="fill"></div>
+        <div class="mark" style="left: 71.4%"><span>2:30</span></div>
+        <div class="mark" style="left: 85.7%"><span>3:00</span></div>
+      </div>
+    </div>
+    <div class="scroll" id="conversation"><div class="empty">Pick a customer and press Start call.</div></div>
+    <form class="composer" id="composer" hidden>
+      <input type="text" id="say" placeholder="Type what the customer says…" autocomplete="off">
+      <button class="primary" id="send">Send</button>
+    </form>
+    <div class="voice-hint" id="voice-hint" hidden><span class="dot" id="mic-dot"></span><span id="voice-text">Connecting the microphone…</span></div>
+  </section>
+
+  <section>
+    <h2>Behind the scenes <span class="count" id="event-count"></span></h2>
+    <div class="legend">Times are real time since the call started. <span class="tag t-tool">tool</span> <span class="tag t-guard">guardrail</span></div>
+    <div class="scroll" id="behind"><div class="empty">Tool calls and guardrail actions appear here.</div></div>
+  </section>
+
+  <section>
+    <h2>Outcome</h2>
+    <div class="scroll" id="outcome"><div class="empty">No outcome yet</div></div>
+  </section>
+</main>
+
+<audio id="bot-audio" autoplay></audio>
+
+<script>
+// The page only starts and ends calls and shows the events the agent logs.
+const $ = (id) => document.getElementById(id);
+const LIMIT = 180, WARN = 150, BAR_MAX = 210;   // seconds; the bar runs to 3:30
+let call = null;   // {id, mode, stream, pc, started, over, lastBot}
+
+// ---------- Controls ----------
+function segmented(id) {
+  const box = $(id);
+  box.addEventListener("click", (e) => {
+    if (!e.target.dataset.v || call) return;
+    box.querySelectorAll("button").forEach((b) => b.classList.toggle("on", b === e.target));
+  });
+  return () => box.querySelector(".on").dataset.v;
+}
+const version = segmented("version"), mode = segmented("mode");
+
+fetch("/api/customers").then((r) => r.json()).then((list) => {
+  $("customer").innerHTML = list.map((c) => `<option value="${c.id}">${c.id} · ${esc(c.name)}</option>`).join("");
+});
+
+function setControls(running) {
+  $("start").disabled = running;
+  $("end").disabled = !running;
+  $("customer").disabled = running;
+  document.querySelectorAll(".segmented button").forEach((b) => (b.disabled = running));
+}
+
+$("start").addEventListener("click", startCall);
+$("end").addEventListener("click", endCall);
+$("composer").addEventListener("submit", (e) => { e.preventDefault(); sendTurn(); });
+
+async function startCall() {
+  reset();
+  const body = { customer_id: $("customer").value, version: version(), mode: mode() };
+  const { call_id } = await post("/api/calls", body);
+  call = { id: call_id, mode: body.mode, started: Date.now(), over: false, lastBot: null };
+  setControls(true);
+  status(`<b>${body.customer_id}</b> · ${body.version} · ${body.mode} · call ${call_id.slice(0, 8)}`);
+  $("clock-note").textContent = body.mode === "text"
+    ? "text mode: the bot's clock, estimated from the words spoken" : "real time";
+  call.stream = new EventSource(`/api/calls/${call_id}/events`);
+  call.stream.onmessage = (m) => onEvent(JSON.parse(m.data));
+  if (body.mode === "text") {
+    $("composer").hidden = false;
+    await post(`/api/calls/${call_id}/open`);
+    $("say").focus();
+  } else {
+    $("voice-hint").hidden = false;
+    call.tick = setInterval(() => !call.over && showClock((Date.now() - call.started) / 1000), 250);
+    try { await connectVoice(call_id); }
+    catch (err) { $("voice-text").textContent = `Microphone or connection failed: ${err.message || err}`; }
+  }
+}
+
+async function sendTurn() {
+  const text = $("say").value.trim();
+  const current = call;   // set to null when the call ends during this turn
+  if (!text || !current || current.over) return;
+  $("say").value = "";
+  $("say").disabled = $("send").disabled = true;
+  try { await post(`/api/calls/${current.id}/say`, { text }); }
+  finally {
+    $("say").disabled = $("send").disabled = current.over;
+    if (!current.over) $("say").focus();
+  }
+}
+
+async function endCall() {
+  if (!call) return;
+  $("end").disabled = true;
+  status(status() + " · ending…");
+  if (call.pc) call.pc.close();
+  await post(`/api/calls/${call.id}/end`);
+}
+
+// ---------- Voice: the browser connection (echo cancellation in the browser) ----------
+async function connectVoice(callId) {
+  const mic = await navigator.mediaDevices.getUserMedia({
+    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+  });
+  const pc = new RTCPeerConnection();
+  call.pc = pc; call.mic = mic;
+  // Pipecat's small WebRTC transport expects an audio and a video transceiver, in that order.
+  pc.addTransceiver(mic.getAudioTracks()[0], { direction: "sendrecv" });
+  pc.addTransceiver("video", { direction: "sendrecv" });
+  pc.ontrack = (e) => { if (e.track.kind === "audio") $("bot-audio").srcObject = new MediaStream([e.track]); };
+  pc.onconnectionstatechange = () => {
+    const live = pc.connectionState === "connected";
+    $("mic-dot").classList.toggle("live", live);
+    $("voice-text").textContent = live ? "Live: speak as the customer. You can talk over the bot."
+      : `Connection: ${pc.connectionState}`;
+  };
+  await pc.setLocalDescription(await pc.createOffer());
+  await new Promise((done) => {            // send the offer with all candidates in it
+    if (pc.iceGatheringState === "complete") return done();
+    pc.addEventListener("icegatheringstatechange", () => pc.iceGatheringState === "complete" && done());
+    setTimeout(done, 2000);
+  });
+  const answer = await post("/api/offer", {
+    sdp: pc.localDescription.sdp, type: pc.localDescription.type, request_data: { call_id: callId },
+  });
+  await pc.setRemoteDescription(answer);
+}
+
+// ---------- Events from the agent's transcript log ----------
+let eventCount = 0;
+function onEvent(e) {
+  if (call && call.mode === "text" && e.call_clock != null) showClock(e.call_clock);
+  switch (e.type) {
+    case "customer": return addTurn("customer", e.text, e);
+    case "bot": return addTurn("bot", e.text, e);
+    case "voice_latency": return addVoiceLatency(e);
+    case "outcome": return showOutcome(e);
+    case "webhook": return showWebhook(e);
+    case "call_over": return callOver();
+    case "llm_call": case "call_connected": case "recording": return;  // not shown
+    default: return addEvent(e);
+  }
+}
+
+function addTurn(who, text, e) {
+  const box = clearEmpty("conversation");
+  const turn = el("div", `turn ${who}`);
+  turn.append(el("div", "bubble", text));
+  const meta = el("div", "meta");
+  meta.append(el("span", "", `${who === "bot" ? "Bot" : "Customer"} · ${fmt(e.at_seconds)}`));
+  if (who === "bot") {
+    if (e.latency_ms != null) meta.append(chip(`agent ${(e.latency_ms / 1000).toFixed(1)} s`, e.latency_ms > 2500));
+    if (e.closing) meta.append(el("span", "", "closing line"));
+    call && (call.lastBot = meta);
+  }
+  turn.append(meta);
+  box.append(turn);
+  scrollDown(box);
+}
+
+function addVoiceLatency(e) {
+  // Voice: end of the customer's speech to the bot's first audio, on the latest bot turn.
+  if (!call || !call.lastBot || call.lastBot.dataset.voice) return addEvent(e);
+  call.lastBot.dataset.voice = "1";
+  call.lastBot.prepend(chip(`${e.total_seconds.toFixed(1)} s to first audio`, e.total_seconds > 3.5));
+}
+
+const GUARD = {
+  guardrail_block: "Blocked sentence", outcome_nudge: "Nudge: record the outcome",
+  action_nudge: "Nudge: call the tool", date_note: "Date note added", timer_note: "Time note (2:30)",
+  discarded_text: "Discarded text", extraction_rejected: "Extraction rejected",
+  post_call_extraction: "After-call extraction", voice_code_joined: "Code parts joined",
+  voice_ack: "Holding line", llm_error: "Model error",
+};
+function addEvent(e) {
+  const box = clearEmpty("behind");
+  let kind = "info", title = GUARD[e.type] || e.type, tag = "event";
+  const skip = new Set(["type", "at_seconds", "call_clock"]);
+  if (e.type === "tool_call") {
+    kind = "tool"; tag = "tool"; title = e.name;
+    if (e.recorded_by === "guardrail") {
+      kind = "guard"; tag = "guardrail";
+      const reason = e.arguments?.details?.reason;
+      title = reason === "call_time_limit" ? "Time-limit close (3:00)" : `Forced transfer (${reason})`;
+    }
+    skip.add("name"); skip.add("recorded_by");
+  } else if (["guardrail_block", "outcome_nudge", "action_nudge", "date_note", "timer_note",
+              "discarded_text", "extraction_rejected", "voice_code_joined", "voice_ack"].includes(e.type)) {
+    kind = "guard"; tag = "guardrail";
+  } else if (e.type === "llm_error") { kind = "error"; tag = "error"; }
+  if (e.type === "action_nudge") title += ` (${e.tool})`;
+  if (e.type === "outcome_nudge") title += ` (${e.reason})`;
+
+  const item = el("div", `event ${kind}`);
+  const head = el("div", "head");
+  head.append(el("span", "time", fmt(e.at_seconds)), el("span", "title", title), el("span", "tag", tag));
+  item.append(head);
+  const kv = el("div", "kv");
+  for (const [k, v] of Object.entries(e)) {
+    if (skip.has(k) || v == null || v === "") continue;
+    if (k === "latency_ms" && !v) continue;
+    const row = el("div");
+    row.append(el("span", "k", `${k}: `), document.createTextNode(typeof v === "string" ? v : JSON.stringify(v)));
+    kv.append(row);
+  }
+  if (kv.childElementCount) item.append(kv);
+  box.append(item);
+  $("event-count").textContent = `${++eventCount}`;
+  scrollDown(box);
+}
+
+function showOutcome(e) {
+  const o = e.outcome, box = $("outcome");
+  box.innerHTML = "";
+  box.append(el("div", "badge", o.outcome_type));
+  box.append(el("div", "sub", `captured by ${o.captured_by === "tool_call" ? "the bot (record_outcome)" : "after-call extraction"}`
+    + (e.errors && e.errors.length ? ` · schema problems: ${e.errors.join("; ")}` : " · schema valid")));
+  const pre = el("pre", "json");
+  pre.innerHTML = highlight(o);
+  box.append(pre);
+  box.append(Object.assign(el("div", "webhook wait", "Webhook: posting…"), { id: "webhook" }));
+}
+
+function showWebhook(e) {
+  const w = $("webhook");
+  if (!w) return;
+  if (e.posted) { w.className = "webhook ok"; w.textContent = `Webhook delivered: HTTP ${e.status} (attempt ${e.attempts})`; }
+  else { w.className = "webhook bad"; w.textContent = `Webhook not delivered: ${e.status ? "HTTP " + e.status : e.error}`; }
+}
+
+function callOver() {
+  if (!call) return;
+  call.over = true;
+  call.stream.close();
+  clearInterval(call.tick);
+  if (call.pc) call.pc.close();
+  if (call.mic) call.mic.getTracks().forEach((t) => t.stop());
+  $("composer").hidden = true;
+  $("voice-hint").hidden = true;
+  const n = el("div", "notice", "Call ended");
+  $("conversation").append(n); scrollDown($("conversation"));
+  status(status().replace(" · ending…", "") + " · ended");
+  call = null;
+  setControls(false);
+}
+
+function reset() {
+  $("conversation").innerHTML = ""; $("behind").innerHTML = "";
+  $("outcome").innerHTML = '<div class="empty">No outcome yet</div>';
+  $("event-count").textContent = ""; eventCount = 0; showClock(0);
+}
+
+// ---------- Helpers ----------
+function showClock(s) {
+  $("clock").textContent = fmt(s, true);
+  const fill = $("fill");
+  fill.style.width = `${Math.min(100, (s / BAR_MAX) * 100)}%`;
+  fill.classList.toggle("late", s >= WARN && s < LIMIT);
+  fill.classList.toggle("over", s >= LIMIT);
+}
+function fmt(s, whole) {
+  s = Math.max(0, s || 0);
+  const m = Math.floor(s / 60), r = s - m * 60;
+  return `${m}:${(whole ? Math.floor(r) : r.toFixed(1)).toString().padStart(whole ? 2 : 4, "0")}`;
+}
+function highlight(value) {
+  return esc(JSON.stringify(value, null, 2)).replace(
+    /(&quot;(?:[^&]|&(?!quot;))*?&quot;)(\s*:)?|\b(true|false|null)\b|(-?\d+(?:\.\d+)?)/g,
+    (m, str, colon, lit, num) => str ? `<span class="${colon ? "key" : "str"}">${str}</span>${colon || ""}`
+      : lit ? `<span class="lit">${lit}</span>` : `<span class="num">${num}</span>`);
+}
+async function post(url, body) {
+  const r = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body || {}) });
+  if (!r.ok) throw new Error(`${url}: HTTP ${r.status}`);
+  return r.json();
+}
+function el(tag, cls, text) { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; }
+function chip(text, slow) { return el("span", `chip${slow ? " slow" : ""}`, text); }
+function clearEmpty(id) { const box = $(id); box.querySelector(".empty")?.remove(); return box; }
+function scrollDown(box) { box.scrollTop = box.scrollHeight; }
+function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]); }
+function status(html) { if (html === undefined) return $("status").innerHTML; $("status").innerHTML = html; }
+</script>
+</body>
+</html>

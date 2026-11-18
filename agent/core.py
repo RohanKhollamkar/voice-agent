@@ -214,6 +214,8 @@ class Agent:
             {"role": "system", "content": build_system_prompt(version, customer)}
         ]
         self.events: list[dict] = []  # the transcript: turns, tool calls, errors
+        # Called with each event as it is logged (the demo console streams them).
+        self.listeners: list = []
         self.outcome: dict | None = None
         self.webhook: dict | None = None  # result of the webhook POST, set by finish()
         self.transcript_path = (
@@ -579,8 +581,10 @@ class Agent:
             transcript_path=self.transcript_path.as_posix(),
         )
         errors = validate_outcome(self.outcome)
+        self._log(type="outcome", outcome=self.outcome, errors=errors)
         save_outcome(self.outcome)
         self.webhook = await post_to_webhook(self.outcome)
+        self._log(type="webhook", **self.webhook)
         self._save_transcript(outcome_errors=errors, webhook=self.webhook)
         return self.outcome
 
@@ -622,7 +626,10 @@ class Agent:
 
     def _log(self, **event) -> None:
         elapsed = (now() - self.state.started_at).total_seconds()
-        self.events.append({"at_seconds": round(elapsed, 2), **event})
+        event = {"at_seconds": round(elapsed, 2), **event}
+        self.events.append(event)
+        for listener in self.listeners:
+            listener(event)
 
     def _save_transcript(self, **extra) -> None:
         """Rewrite the transcript file. Called every turn so a crash loses nothing."""
