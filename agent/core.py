@@ -60,10 +60,35 @@ TIME_NOTE = (
     "confirm it and record it now. If not, tell them a colleague will call back and "
     "record CALLBACK_REQUEST with reason call_time_limit.]"
 )
-# v2: sent once if the bot says goodbye without having recorded an outcome.
-OUTCOME_NOTE = (
-    "[Note from the system: you ended the call without calling record_outcome. Call "
-    "record_outcome now with what the customer said and agreed to. Say nothing.]"
+# v2: when the call is ending, or the bot says it has recorded something, but no
+# outcome is recorded, the model gets one of these notes, once per reason per call.
+NUDGES = {
+    "goodbye": (
+        "[Note from the system: you said goodbye without calling record_outcome. Call "
+        "record_outcome now with what the customer said and agreed to. Say nothing.]"
+    ),
+    "claimed": (
+        "[Note from the system: you told the customer it is recorded, but record_outcome "
+        "has not been called. Call record_outcome now with what the customer agreed to. "
+        "Say nothing.]"
+    ),
+    "time_limit": (
+        "[Note from the system: the call has reached its time limit. If the customer "
+        "agreed to something, call record_outcome now with it. Otherwise record "
+        "CALLBACK_REQUEST with reason call_time_limit. Say nothing.]"
+    ),
+    "hang_up": (
+        "[Note from the system: the customer has hung up. If they agreed to something, "
+        "call record_outcome now with it. Say nothing.]"
+    ),
+}
+# The bot telling the customer something is recorded: "I've recorded your promise",
+# "I've noted your payment". "I've noted your request" is the waiver line, said while
+# the call goes on, so it is not a claim.
+CLAIMED = re.compile(
+    r"\b(?:i've|i have|we've|we have|i)\s+(?:now\s+)?recorded\b|\brecorded your\b"
+    r"|\b(?:has|have) been recorded\b|\bnoted your (?:promise|payment|commitment)\b",
+    re.IGNORECASE,
 )
 
 
@@ -154,6 +179,7 @@ class Agent:
         )
         self.clock = clock
         self.time_note_sent = False
+        self._nudged: set[str] = set()  # the outcome nudges already given
         # Numbers the bot may say (v2 reply check): config, then tool results and the
         # customer's own words as the call goes on.
         self.allowed_numbers = config_numbers()
@@ -201,7 +227,7 @@ class Agent:
             self.state.customer_turns.append(text)
             self.allowed_numbers |= numbers_in(text)
             if self.state.guarded:
-                if self._forced_outcome(text):
+                if self._forced_transfer(text):
                     return self._say([self._closing()], started, [], closing=True)
                 # Dates the customer mentions, resolved in code: "[Friday = ...]".
                 notes = date_notes(text, self.state.started_at.date())
@@ -220,24 +246,32 @@ class Agent:
         # Each piece is (text, index of the assistant message that carries it).
         pieces: list[tuple[str, int]] = []
         models_used: list[str] = []
-        await self._model_rounds(pieces, models_used)
-        if (
+        timed_out = (
             self.state.guarded
-            and not self.ended
-            and pieces
-            and GOODBYE.search(pieces[-1][0])
-        ):
-            # v2: the bot said goodbye without recording an outcome. Ask once more; if it
-            # records one now, the closing line built from it replaces the goodbye.
-            self._log(type="outcome_nudge")
-            self.messages.append({"role": "user", "content": OUTCOME_NOTE})
-            before = len(pieces)
-            await self._model_rounds(pieces, models_used)
+            and speaker == "customer"
+            and self.elapsed_seconds() >= config.CALL_MAX_SECONDS
+        )
+        if timed_out:
+            # v2: the call is out of time. The model gets one chance to record what was
+            # agreed; otherwise code records a callback for the time limit.
+            await self._nudge("time_limit", pieces, models_used)
             if not self.ended:
-                for piece, index in pieces[before:]:
-                    self.messages[index]["content"] = ""
-                    self._log(type="discarded_text", text=piece)
-                del pieces[before:]
+                self._record_in_code(
+                    "CALLBACK_REQUEST", {"time": None, "reason": "call_time_limit"}
+                )
+            return self._say(
+                self._utterances(pieces), started, models_used, closing=True
+            )
+
+        await self._model_rounds(pieces, models_used)
+        if self.state.guarded and not self.ended and pieces:
+            # v2: the bot said it recorded something, or said goodbye, with no outcome
+            # recorded. One nudge; if it records one now, the closing line built from it
+            # replaces what the bot said.
+            if any(CLAIMED.search(piece) for piece, _ in pieces):
+                await self._nudge("claimed", pieces, models_used)
+            elif GOODBYE.search(pieces[-1][0]):
+                await self._nudge("goodbye", pieces, models_used)
 
         if not self.state.guarded:  # v1: everything the model said, joined, as before
             bot_text = " ".join(piece for piece, _ in pieces) or FALLBACK_LINE
@@ -290,22 +324,35 @@ class Agent:
                 utterances.append(reply)
         return utterances or [FALLBACK_LINE]
 
-    def _forced_outcome(self, customer_text: str) -> bool:
-        """v2: record an outcome in code, without the model, when the customer's words
-        call for a transfer or the call has reached its time limit."""
+    async def _nudge(
+        self, reason: str, pieces: list[tuple[str, int]], models_used: list[str]
+    ) -> None:
+        """v2: ask the model, once per reason per call, to record the outcome now.
+        Anything it says in answer to the note is not spoken unless it records one."""
+        if self.ended or reason in self._nudged:
+            return
+        self._nudged.add(reason)
+        self._log(type="outcome_nudge", reason=reason)
+        self.messages.append({"role": "user", "content": NUDGES[reason]})
+        before = len(pieces)
+        await self._model_rounds(pieces, models_used)
+        if not self.ended:
+            for piece, index in pieces[before:]:
+                self.messages[index]["content"] = ""
+                self._log(type="discarded_text", text=piece)
+            del pieces[before:]
+
+    def _forced_transfer(self, customer_text: str) -> bool:
+        """v2: when the customer's words call for a transfer, record it in code,
+        without asking the model."""
         reason = transfer_trigger(customer_text)
-        if reason:
-            arguments = {
-                "outcome_type": "TRANSFER_TO_HUMAN",
-                "details": {"reason": reason},
-            }
-        elif self.elapsed_seconds() >= config.CALL_MAX_SECONDS:
-            arguments = {
-                "outcome_type": "CALLBACK_REQUEST",
-                "details": {"time": None, "reason": "call_time_limit"},
-            }
-        else:
+        if not reason:
             return False
+        self._record_in_code("TRANSFER_TO_HUMAN", {"reason": reason})
+        return self.ended
+
+    def _record_in_code(self, outcome_type: str, details: dict) -> None:
+        arguments = {"outcome_type": outcome_type, "details": details}
         result = run_tool(self.state, "record_outcome", arguments)
         self._log(
             type="tool_call",
@@ -315,7 +362,6 @@ class Agent:
             recorded_by="guardrail",
             latency_ms=0,
         )
-        return self.ended
 
     def _closing(self) -> str:
         return closing_line(
@@ -425,6 +471,14 @@ class Agent:
             return self.outcome
 
         captured_by = "tool_call"
+        if self.state.outcome_type is None and self.state.guarded:
+            # v2: the customer has gone with no outcome recorded. One nudge to the
+            # model; nothing it says is spoken, the call is over.
+            pieces: list[tuple[str, int]] = []
+            await self._nudge("hang_up", pieces, [])
+            for piece, index in pieces:
+                self.messages[index]["content"] = ""
+                self._log(type="discarded_text", text=piece)
         if self.state.outcome_type is None:
             # The bot never called record_outcome, so read the outcome off the transcript.
             captured_by = "post_call_extraction"

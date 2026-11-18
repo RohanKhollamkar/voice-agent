@@ -1,7 +1,7 @@
 """The speech service, chosen by TTS_PROVIDER, so switching needs no other change.
 
-TTS_PROVIDER=elevenlabs (default): ElevenLabs Flash v2.5, voice ELEVENLABS_VOICE_ID.
-TTS_PROVIDER=sarvam: Sarvam Bulbul (SARVAM_TTS_MODEL), in Indian English.
+TTS_PROVIDER=sarvam (default): Sarvam Bulbul (SARVAM_TTS_MODEL), in Indian English.
+TTS_PROVIDER=elevenlabs: ElevenLabs Flash v2.5, voice ELEVENLABS_VOICE_ID.
 """
 
 from pipecat.services.tts_service import TTSService

@@ -68,7 +68,7 @@ USER_SPEECH_TIMEOUT: float = float(
 # (0 turns it off).
 VOICE_ACK_AFTER_SECONDS: float = float(os.getenv("VOICE_ACK_AFTER_SECONDS") or 1.5)
 VOICE_ACK_LINE: str = "One moment."
-# The alternative speech service (TTS_PROVIDER=sarvam). An empty voice uses the model's default.
+# Sarvam speech (TTS_PROVIDER=sarvam, the default). An empty voice uses the model's default.
 SARVAM_TTS_MODEL: str = _get_str("SARVAM_TTS_MODEL", "bulbul:v4-flash")
 SARVAM_TTS_VOICE: str = _get_str("SARVAM_TTS_VOICE")
 # Default is "Sarah", an ElevenLabs premade voice. Premade voices work on the free
@@ -102,4 +102,6 @@ TIMEZONE: str = "Asia/Kolkata"
 # Behaviour
 ENFORCE_OTP: bool = _get_bool("ENFORCE_OTP", True)
 BOT_VERSION: str = _get_str("BOT_VERSION", "v2")
-TTS_PROVIDER: str = _get_str("TTS_PROVIDER", "elevenlabs").lower()
+# sarvam (default) | elevenlabs. Sarvam is the default because the ElevenLabs free
+# quota ran out during testing; set elevenlabs to switch back.
+TTS_PROVIDER: str = _get_str("TTS_PROVIDER", "sarvam").lower()

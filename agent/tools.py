@@ -57,9 +57,12 @@ def send_otp(state: CallState) -> dict:
 def verify_otp(state: CallState, code: str) -> dict:
     """Check the code. After MAX_OTP_ATTEMPTS wrong codes it refuses, even a right one."""
     if not state.otp_sent:
+        # Not counted as a failed attempt: the customer cannot have a code yet.
         return {
             "verified": False,
-            "error": "No OTP has been sent yet. Call send_otp first.",
+            "error": "Refused: no code has been sent in this call, so there is nothing to "
+            "check. Call send_otp now, tell the customer a code has been sent to their "
+            "registered mobile, and ask them to read it out. Then call verify_otp.",
         }
     refused = {
         "verified": False,

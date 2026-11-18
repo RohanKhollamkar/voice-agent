@@ -1,7 +1,7 @@
 """Run a voice call without a microphone, and report latency per stage.
 
 A fake transport replaces the mic and speaker. The customer's lines are spoken by
-an ElevenLabs premade voice and played into the real pipeline (Sarvam speech-to-
+a Sarvam voice (cached on disk after the first run) and played into the real pipeline (Sarvam speech-to-
 text, the agent, the reply check, the normaliser, speech) in real time; the bot's
 audio is "played" in real time too, so turn-taking and barge-in behave as on a call.
 Each customer line waits until the bot has finished its reply, except with
@@ -19,6 +19,7 @@ WAV recording as any voice call does.
 import argparse
 import asyncio
 import base64
+import hashlib
 import io
 import json
 import statistics
@@ -128,16 +129,30 @@ class FakeTransport(BaseTransport):
         return self._output
 
 
+CACHE_DIR = config.RUNS_DIR / "voice_test_cache"
+
+
 def speech(text: str) -> bytes:
-    """The customer's line as 16 kHz audio: ElevenLabs, or Sarvam if ElevenLabs refuses
-    (its free plan has a monthly character quota)."""
-    try:
-        return elevenlabs_speech(text)
-    except httpx.HTTPStatusError as error:
-        print(
-            f"  (ElevenLabs refused the customer's line: {error.response.status_code}; using Sarvam)"
-        )
-        return sarvam_speech(text)
+    """The customer's line as 16 kHz audio, synthesised once and then reused from
+    runs/voice_test_cache/, so reruns cost no speech credits. Sarvam by default, or
+    ElevenLabs with TTS_PROVIDER=elevenlabs (falling back to Sarvam if it refuses: its
+    free plan has a monthly character quota)."""
+    provider = "elevenlabs" if config.TTS_PROVIDER == "elevenlabs" else "sarvam"
+    key = hashlib.sha256(f"{provider}|{text}".encode()).hexdigest()[:20]
+    cached = CACHE_DIR / f"{key}.pcm"
+    if cached.exists():
+        return cached.read_bytes()
+    if provider == "elevenlabs":
+        try:
+            audio = elevenlabs_speech(text)
+        except httpx.HTTPStatusError as error:
+            print(f"  (ElevenLabs refused: {error.response.status_code}; using Sarvam)")
+            audio = sarvam_speech(text)
+    else:
+        audio = sarvam_speech(text)
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    cached.write_bytes(audio)
+    return audio
 
 
 def sarvam_speech(text: str) -> bytes:
