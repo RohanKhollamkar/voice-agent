@@ -24,6 +24,7 @@ from pipecat.frames.frames import (
     CancelFrame,
     EndFrame,
     Frame,
+    InputAudioRawFrame,
     LLMContextFrame,
     LLMFullResponseEndFrame,
     LLMFullResponseStartFrame,
@@ -217,6 +218,38 @@ def save_recording(path, audio: bytes, sample_rate: int, num_channels: int) -> N
         file.writeframes(audio)
 
 
+class MicGate(FrameProcessor):
+    """Half-duplex echo handling for laptop speakers with no headphones: while the bot
+    is speaking, and for a short tail after, the mic's audio is replaced with silence,
+    so the bot never hears (and answers, or is interrupted by) its own voice. Silence
+    rather than nothing, so speech-to-text and the recording keep a steady stream. The
+    cost: the customer cannot interrupt the bot (no barge-in)."""
+
+    TAIL_SECONDS = 0.4  # the room's echo lingers a little after the bot stops
+
+    def __init__(self):
+        super().__init__()
+        self._bot_speaking = False
+        self._open_at = 0.0  # the mic is live again from this time
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+        if isinstance(frame, BotStartedSpeakingFrame):
+            self._bot_speaking = True
+        elif isinstance(frame, BotStoppedSpeakingFrame):
+            self._bot_speaking = False
+            self._open_at = time.monotonic() + self.TAIL_SECONDS
+        elif isinstance(frame, InputAudioRawFrame) and (
+            self._bot_speaking or time.monotonic() < self._open_at
+        ):
+            frame = InputAudioRawFrame(
+                audio=b"\0" * len(frame.audio),
+                sample_rate=frame.sample_rate,
+                num_channels=frame.num_channels,
+            )
+        await self.push_frame(frame, direction)
+
+
 def make_local_transport() -> BaseTransport:
     from pipecat.transports.local.audio import (
         LocalAudioTransport,
@@ -229,10 +262,15 @@ def make_local_transport() -> BaseTransport:
 
 
 async def run_call(
-    customer_id: str, version: str, transport: BaseTransport | None = None
+    customer_id: str,
+    version: str,
+    transport: BaseTransport | None = None,
+    echo: str = "none",
+    handle_sigint: bool = True,
 ) -> dict:
     """Run one voice call to the end and return its outcome. The transport defaults to
-    the local mic and speaker; a test can pass another."""
+    the local mic and speaker; a test or the browser connection can pass another.
+    echo="half-duplex" mutes the mic while the bot speaks (see MicGate)."""
     agent = Agent(customer_id, version, clock="wall")  # the call timer uses real time
     transport = transport or make_local_transport()
 
@@ -272,6 +310,7 @@ async def run_call(
     pipeline = Pipeline(
         [
             transport.input(),
+            *([MicGate()] if echo == "half-duplex" else []),
             stt,
             user_turns,
             agent_step,
@@ -313,7 +352,7 @@ async def run_call(
     )
     agent_step.end_call = worker.stop_when_done
 
-    runner = WorkerRunner()
+    runner = WorkerRunner(handle_sigint=handle_sigint)
     await runner.add_workers(worker)
     try:
         await runner.run()
