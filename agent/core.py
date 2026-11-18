@@ -67,7 +67,7 @@ NUDGES = {
         "[Note from the system: you said goodbye without calling record_outcome. Call "
         "record_outcome now with what the customer said and agreed to. Say nothing.]"
     ),
-    "claimed": (
+    "claimed_record_outcome": (
         "[Note from the system: you told the customer it is recorded, but record_outcome "
         "has not been called. Call record_outcome now with what the customer agreed to. "
         "Say nothing.]"
@@ -82,14 +82,36 @@ NUDGES = {
         "call record_outcome now with it. Say nothing.]"
     ),
 }
-# The bot telling the customer something is recorded: "I've recorded your promise",
-# "I've noted your payment". "I've noted your request" is the waiver line, said while
-# the call goes on, so it is not a claim.
-CLAIMED = re.compile(
-    r"\b(?:i've|i have|we've|we have|i)\s+(?:now\s+)?recorded\b|\brecorded your\b"
-    r"|\b(?:has|have) been recorded\b|\bnoted your (?:promise|payment|commitment)\b",
-    re.IGNORECASE,
+# v2: the bot telling the customer it has done something, by tool. If that tool has
+# not run in this call, the model is nudged once to call it (see _claim_nudge).
+# "I've noted your request" is the waiver line, said while the call goes on, so it is
+# not a claim; "I'll send you a code" is a promise, not a claim.
+CLAIMS = {
+    "send_otp": re.compile(
+        r"\b(?:i've|i have|i|we've|we have)\s+(?:just\s+)?sent\b"
+        r"|\b(?:code|otp)\s+(?:has been|have been|was|is)\s+sent\b",
+        re.IGNORECASE,
+    ),
+    "get_account_summary": re.compile(
+        r"\b(?:i've|i have|i)\s+(?:just\s+)?(?:checked|looked at|pulled up|reviewed)"
+        r"\s+(?:your\s+)?(?:account|details|records|dues)\b",
+        re.IGNORECASE,
+    ),
+    "record_outcome": re.compile(
+        r"\b(?:i've|i have|we've|we have|i)\s+(?:now\s+)?recorded\b|\brecorded your\b"
+        r"|\b(?:has|have) been recorded\b|\bnoted your (?:promise|payment|commitment)\b",
+        re.IGNORECASE,
+    ),
+}
+CLAIM_NOTE = (
+    "[Note from the system: you told the customer {what}, but {tool} has not been "
+    "called in this call. Call {tool} now, then give the customer your reply again, "
+    "based on what it returns.]"
 )
+CLAIMED_WHAT = {
+    "send_otp": "a code has been sent",
+    "get_account_summary": "you checked their account",
+}
 
 
 # Some models write their thinking inline, wrapped in <think> tags. An unclosed
@@ -265,11 +287,14 @@ class Agent:
 
         await self._model_rounds(pieces, models_used)
         if self.state.guarded and not self.ended and pieces:
-            # v2: the bot said it recorded something, or said goodbye, with no outcome
-            # recorded. One nudge; if it records one now, the closing line built from it
-            # replaces what the bot said.
-            if any(CLAIMED.search(piece) for piece, _ in pieces):
-                await self._nudge("claimed", pieces, models_used)
+            # v2: the bot claimed an action whose tool has not run (sent a code, checked
+            # the account, recorded the outcome), or said goodbye with no outcome
+            # recorded. One nudge; see _nudge and _claim_nudge for what is then said.
+            claim = self._unbacked_claim(pieces)
+            if claim == "record_outcome":
+                await self._nudge("claimed_record_outcome", pieces, models_used)
+            elif claim:
+                await self._claim_nudge(claim, pieces, models_used)
             elif GOODBYE.search(pieces[-1][0]):
                 await self._nudge("goodbye", pieces, models_used)
 
@@ -340,6 +365,46 @@ class Agent:
             for piece, index in pieces[before:]:
                 self.messages[index]["content"] = ""
                 self._log(type="discarded_text", text=piece)
+            del pieces[before:]
+
+    def _unbacked_claim(self, pieces: list[tuple[str, int]]) -> str | None:
+        """v2: the first tool the bot said this turn it had used, but which has not run
+        in this call. Each tool is nudged for at most once per call."""
+        for tool, pattern in CLAIMS.items():
+            done = (
+                self.state.outcome_type is not None
+                if tool == "record_outcome"
+                else tool in self.state.tools_done
+            )
+            if done or f"claimed_{tool}" in self._nudged:
+                continue
+            if any(pattern.search(piece) for piece, _ in pieces):
+                return tool
+        return None
+
+    async def _claim_nudge(
+        self, tool: str, pieces: list[tuple[str, int]], models_used: list[str]
+    ) -> None:
+        """v2: the bot said it sent a code or checked the account without calling the
+        tool. Ask the model once to call it. If it does and replies again, the new
+        reply replaces the claim; if it does not call it, the claim stands and the
+        answer to the note is not spoken (the verify_otp and figure checks still
+        apply)."""
+        self._nudged.add(f"claimed_{tool}")
+        self._log(type="action_nudge", tool=tool)
+        note = CLAIM_NOTE.format(what=CLAIMED_WHAT[tool], tool=tool)
+        self.messages.append({"role": "user", "content": note})
+        before = len(pieces)
+        await self._model_rounds(pieces, models_used)
+        called = tool in self.state.tools_done
+        replaced = called and len(pieces) > before
+        dropped = pieces[:before] if replaced else pieces[before:]
+        for piece, index in dropped:
+            self.messages[index]["content"] = ""
+            self._log(type="discarded_text", text=piece)
+        if replaced:
+            del pieces[:before]
+        else:
             del pieces[before:]
 
     def _forced_transfer(self, customer_text: str) -> bool:

@@ -35,6 +35,7 @@ class CallState:
     outcome_details: dict | None = None
     follow_ups: list | None = None
     guarded: bool = False  # v2: code guardrails on (see agent/guardrails.py)
+    tools_done: set[str] = field(default_factory=set)  # tools that ran without error
     customer_turns: list[str] = field(
         default_factory=list
     )  # what the customer has said
@@ -170,9 +171,12 @@ def run_tool(state: CallState, name: str, arguments: dict) -> dict:
     if name not in TOOLS_BY_VERSION[state.bot_version]:
         return {"error": f"Unknown tool '{name}'."}
     try:
-        return TOOLS[name](state, **arguments)
+        result = TOOLS[name](state, **arguments)
     except TypeError as error:  # the model sent missing or unexpected arguments
         return {"error": f"Bad arguments for {name}: {error}"}
+    if "error" not in result:
+        state.tools_done.add(name)
+    return result
 
 
 def _tool(name: str, description: str, properties: dict, required: list[str]) -> dict:
