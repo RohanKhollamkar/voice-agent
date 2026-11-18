@@ -16,5 +16,9 @@ num2words
 # Eval scenario files
 pyyaml
 
+# Time zone data for ZoneInfo("Asia/Kolkata") in agent/core.py: Windows has no
+# built-in time zone database
+tzdata
+
 # Dev
 ruff
