@@ -67,7 +67,8 @@ scripts/      spike.py
 | 3 | Eval harness | Scenarios run in text mode, scored, results saved as CSV; v1 baseline recorded |
 | 4 | v2 | New prompt plus guardrails; evals rerun; v1 vs v2 table produced |
 | 5 | Voice wrap | Full calls by voice, call timer, recordings and transcripts saved |
-| 6 | Repo polish | README, sample transcripts, `.env.example`, clean history |
+| 6 | Final evaluation pass | Judge chosen, held-out set run, v1 and v2 compared over 3 runs, results committed |
+| 7 | Repo polish | README, sample transcripts, `.env.example`, clean history |
 
 Stage 3's scenario list and scoring rules are decided in phase 2 before that stage runs.
 
@@ -279,7 +280,19 @@ Test it yourself in Text mode with Playwright: run S01-style turns through the p
 Commit as "Demo console".
 ```
 
-### Stage 6: Repo polish
+### Stage 6: Final evaluation pass
+
+Add docs/scenarios_heldout.csv to the repo first. The full prompt is in the conversation of 19 Nov; summary of its steps:
+
+0. Preconditions: the v2 fixed opening line and the identity_before_disclosure check are in; tests pass; record the commit hash.
+1. Choose the judge: two non-Nemotron candidates on the NVIDIA API, re-judge 6 saved transcripts, pick by a fixed rule, write docs/results/final/judge_choice.md.
+2. Load the five held-out scenarios (H01-H05) without changing v2.
+3. Freeze: no prompt, guardrail or check changes from here on.
+4. Run v1 and v2, 19 scenarios x 3 runs each, judge on, --concurrency 3.
+5. Run v1 and v2 once on the held-out set, reported separately.
+6. Write docs/results/final/ (comparison, held-out, judge choice, guardrail counts, headline numbers), commit, push, open a pull request into main. Do not merge.
+
+### Stage 7: Repo polish
 
 ```
 Prepare the repo for reviewers.
