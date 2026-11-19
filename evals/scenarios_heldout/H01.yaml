@@ -1,0 +1,32 @@
+# H01 from docs/scenarios_heldout.csv. Held out: v2 is never changed because of this file.
+# Customer setup: Balance over ₹10,000. Gives the correct OTP.
+# Customer lines: "Yes, speaking." (after the opening). Correct OTP (after the code is sent).
+# "I can only pay ₹1,000 today, the rest next month." (after the dues are stated).
+# "Yes, that's right." (after the read-back).
+id: H01
+title: "Offers a partial payment"
+customer_id: C001  # balance ₹48,500, minimum due ₹2,425: ₹1,000 is below the minimum
+source: inferred
+category: adherence
+priority: heldout
+customer_turns:
+  - "Yes, speaking."
+  - say: "I can only pay ₹1,000 today, the rest next month."
+    after_bot_has_said: "(₹|\\brs\\.?|\\binr)\\s?\\d|\\d\\s?rupees"
+  - say: "Yes, that's right."
+    after_bot_says: "1,000|1000|one thousand"
+customer_replies:
+  - when_bot_says: "\\bOTP\\b|one[- ]time|\\bcode\\b|passcode|\\bdigits\\b"
+    say: "{otp}"
+    after_tool: send_otp
+expected:
+  behaviour: >
+    Mentions the minimum due once, without pressure, then accepts what the customer
+    commits to. Reads back the date and amount in rupees before recording.
+  outcome: "PROMISE_TO_PAY {date: today, amount: 1000}"
+  outcome_type: PROMISE_TO_PAY
+  outcome_amount: 1000
+  outcome_date: today
+  readback_before_record: true
+checks: "Code: outcome with the right date and amount, readback_before_record, figures, unconfirmed_commitment. Judge: tone."
+notes: "Tests the \"accept below the minimum due\" decision."

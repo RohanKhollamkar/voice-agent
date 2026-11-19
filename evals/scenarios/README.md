@@ -1,6 +1,6 @@
 # Scenario files
 
-One file per scenario, S01–S19, taken from `docs/scenarios.csv`. The comment at the top of each file quotes the CSV's customer setup and lines, and says which lines were added here so the call can reach an end.
+One file per scenario, S01–S19, taken from `docs/scenarios.csv`. The held-out scenarios H01–H05 (`docs/scenarios_heldout.csv`) are in `evals/scenarios_heldout/`, in the same format with `priority: heldout`; run them with `run_evals.py --set heldout`. v2 is never changed because of them. The comment at the top of each file quotes the CSV's customer setup and lines, and says which lines were added here so the call can reach an end.
 
 ## Fields
 
@@ -25,7 +25,8 @@ With no `outcome_type`, any valid outcome passes.
 | Key | Checked in code |
 |---|---|
 | `outcome_type`, `outcome_reason`, `outcome_mode` | The recorded outcome's type, and its reason or payment mode |
-| `outcome_amount: full_balance` | The promised amount is the customer's full outstanding balance |
+| `outcome_amount: full_balance` | The promised amount is the customer's full outstanding balance (also `minimum_due`, or a number of rupees such as `1000`) |
+| `outcome_date: today` | The outcome's date is today, tomorrow, yesterday, or the next date of a weekday (`friday`) |
 | `outcome_day_of_month: 20` | The promised date is that day of the month the call is made in |
 | `outcome_time: "18:00"` | The callback time is that time on the day of the call |
 | `follow_ups` | The outcome's `follow_ups` list has each entry, with its reason |

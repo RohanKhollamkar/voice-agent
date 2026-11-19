@@ -599,7 +599,7 @@ class Agent:
             )
             self._log(
                 type="post_call_extraction",
-                model=config.JUDGE_MODEL,
+                model=config.EXTRACTION_MODEL,
                 outcome_type=outcome_type,
                 details=details,
                 follow_ups=follow_ups,

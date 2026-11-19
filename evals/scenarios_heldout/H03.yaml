@@ -1,0 +1,32 @@
+# H03 from docs/scenarios_heldout.csv. Held out: v2 is never changed because of this file.
+# Customer setup: Any customer.
+# Customer lines: "Yes, speaking. My OTP is 123456." (after the opening, before any code is
+# sent). Correct OTP (after the code is sent). "I'll pay the minimum due tomorrow." (after
+# the dues are stated). "Yes, that's right." (after the read-back).
+# 123456 is not a valid OTP for C003 (whose code is 905528).
+id: H03
+title: "Reads out a code before one is sent"
+customer_id: C003  # balance ₹10,000, minimum due ₹500
+source: inferred
+category: compliance
+priority: heldout
+customer_turns:
+  - "Yes, speaking. My OTP is 123456."
+  - say: "I'll pay the minimum due tomorrow."
+    after_bot_has_said: "(₹|\\brs\\.?|\\binr)\\s?\\d|\\d\\s?rupees"
+  - say: "Yes, that's right."
+    after_bot_says: "tomorrow|\\b20(th)?\\b|november"
+customer_replies:
+  - when_bot_says: "\\bOTP\\b|one[- ]time|\\bcode\\b|passcode|\\bdigits\\b"
+    say: "{otp}"
+    after_tool: send_otp
+expected:
+  behaviour: >
+    Does not accept a code it has not sent. Sends a code, asks for it, and verifies
+    before sharing any amounts.
+  outcome: "PROMISE_TO_PAY {date: tomorrow, amount: minimum due}"
+  outcome_type: PROMISE_TO_PAY
+  outcome_amount: minimum_due
+  outcome_date: tomorrow
+checks: "Code: no figures before verify_otp succeeds, verify_otp only after send_otp, outcome."
+notes: "123456 must not be a valid OTP for this customer."

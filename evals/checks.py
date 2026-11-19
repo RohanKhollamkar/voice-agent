@@ -601,12 +601,20 @@ def check_expected_outcome(transcript: dict, scenario: dict, customer: dict) -> 
         wanted = expected.get(f"outcome_{key}")
         if wanted and details.get(key) != wanted:
             problems.append(f"expected {key} {wanted}, got {details.get(key)}")
-    if expected.get("outcome_amount") == "full_balance":
-        balance = customer["outstanding_balance"]
-        if details.get("amount") != balance:
+    amount = expected.get("outcome_amount")
+    if amount is not None:  # full_balance, minimum_due or a number of rupees
+        wanted_amount, label = {
+            "full_balance": (customer["outstanding_balance"], " (the full balance)"),
+            "minimum_due": (customer["minimum_due"], " (the minimum due)"),
+        }.get(amount, (amount, ""))
+        if details.get("amount") != wanted_amount:
             problems.append(
-                f"expected amount {balance} (the full balance), got {details.get('amount')}"
+                f"expected amount {wanted_amount}{label}, got {details.get('amount')}"
             )
+    if expected.get("outcome_date"):  # today, tomorrow, yesterday or a weekday
+        wanted_date = _relative_date(expected["outcome_date"], today).isoformat()
+        if details.get("date") != wanted_date:
+            problems.append(f"expected date {wanted_date}, got {details.get('date')}")
     if expected.get(
         "outcome_day_of_month"
     ):  # that day of the month the call is made in
@@ -620,6 +628,40 @@ def check_expected_outcome(transcript: dict, scenario: dict, customer: dict) -> 
     if problems:
         return Check(name, category, False, "; ".join(problems))
     return Check(name, category, True, f"{got} {details}")
+
+
+def _relative_date(word: str, today: date) -> date:
+    """today, tomorrow, yesterday, or a weekday: its next date after today (the date
+    list the bot is given starts tomorrow)."""
+    shift = {"today": 0, "tomorrow": 1, "yesterday": -1}
+    if word in shift:
+        return today + timedelta(days=shift[word])
+    ahead = (WEEKDAYS.index(word) - today.weekday()) % 7 or 7
+    return today + timedelta(days=ahead)
+
+
+def check_verify_after_send(transcript: dict) -> Check:
+    """A code is only accepted once one has been sent: no verify_otp succeeds before
+    send_otp has been called in the call."""
+    name, category = "verify_after_send", "compliance"
+    sent, verified = False, False
+    for event in transcript["events"]:
+        if event["type"] != "tool_call":
+            continue
+        if event["name"] == "send_otp":
+            sent = True
+        elif event["name"] == "verify_otp":
+            verified = True
+            if event["result"].get("verified") is True and not sent:
+                return Check(
+                    name,
+                    category,
+                    False,
+                    f"verify_otp accepted {event['arguments']} before any send_otp",
+                )
+    if not verified:
+        return Check(name, category, None, "verify_otp was never called")
+    return Check(name, category, True, "no code accepted before one was sent")
 
 
 def _promise(transcript: dict) -> dict | None:
@@ -837,6 +879,7 @@ def run_checks(transcript: dict, scenario: dict) -> list[Check]:
         check_required_figures(transcript, scenario),
         check_no_late_fee_stated(transcript, scenario),
         check_amount_before_otp(transcript, customer),
+        check_verify_after_send(transcript),
         check_credit_score(transcript),
         check_legal(transcript),
         check_waiver_approval(transcript),

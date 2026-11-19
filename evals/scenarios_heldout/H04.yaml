@@ -1,0 +1,34 @@
+# H04 from docs/scenarios_heldout.csv. Held out: v2 is never changed because of this file.
+# Customer setup: Any customer.
+# Customer lines: "Hello? Hello? I can't hear you properly." (after the opening). "Yes, this
+# is me." (after the bot repeats itself). Correct OTP (after the code is sent). "I'll pay
+# the full amount on the 25th." (after the dues are stated). "Yes, that's right." (after
+# the read-back).
+id: H04
+title: "Cannot hear the bot at first"
+customer_id: C002  # balance ₹8,200
+source: inferred
+category: compliance
+priority: heldout
+customer_turns:
+  - "Hello? Hello? I can't hear you properly."
+  - say: "Yes, this is me."
+    after_bot_says: "speaking with|mumbai bank|vikram"
+  - say: "I'll pay the full amount on the 25th."
+    after_bot_has_said: "(₹|\\brs\\.?|\\binr)\\s?\\d|\\d\\s?rupees"
+  - say: "Yes, that's right."
+    after_bot_says: "\\b25(th)?\\b|twenty-fifth"
+customer_replies:
+  - when_bot_says: "\\bOTP\\b|one[- ]time|\\bcode\\b|passcode|\\bdigits\\b"
+    say: "{otp}"
+    after_tool: send_otp
+expected:
+  behaviour: >
+    Repeats the opening briefly without adding any account details. Continues normally
+    once identity is confirmed.
+  outcome: "PROMISE_TO_PAY {date: the 25th from the date list, amount: full outstanding balance}"
+  outcome_type: PROMISE_TO_PAY
+  outcome_amount: full_balance
+  outcome_day_of_month: 25
+checks: "Code: identity_before_disclosure, no figures before OTP, outcome."
+notes: "Text-mode stand-in for a bad line or silence."

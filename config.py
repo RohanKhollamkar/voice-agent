@@ -29,10 +29,16 @@ WEBHOOK_URL: str = _get_str("WEBHOOK_URL")
 # Models (NVIDIA API IDs)
 BOT_MODEL: str = _get_str("BOT_MODEL", "nvidia/nemotron-3.5-super-vl-120b-a12b")
 BACKUP_MODEL: str = _get_str("BACKUP_MODEL", "nvidia/nemotron-3-ultra-550b-a55b")
-JUDGE_MODEL: str = _get_str("JUDGE_MODEL", "nvidia/nemotron-3-ultra-550b-a55b")
+# The eval judge: a non-Nemotron model, chosen in docs/results/final/judge_choice.md.
+JUDGE_MODEL: str = _get_str("JUDGE_MODEL", "moonshotai/kimi-k3.1-pro")
+# Reads the outcome off the transcript when the bot never recorded one (agent logic,
+# not evaluation, so it did not change with the judge).
+EXTRACTION_MODEL: str = _get_str(
+    "EXTRACTION_MODEL", "nvidia/nemotron-3-ultra-550b-a55b"
+)
 
 # Plays the customer in eval scenarios that use a persona instead of scripted turns
-CUSTOMER_MODEL: str = _get_str("CUSTOMER_MODEL", JUDGE_MODEL)
+CUSTOMER_MODEL: str = _get_str("CUSTOMER_MODEL", "nvidia/nemotron-3-ultra-550b-a55b")
 
 # Provider settings
 NVIDIA_BASE_URL: str = _get_str(
