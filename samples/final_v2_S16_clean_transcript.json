@@ -1,0 +1,304 @@
+{
+  "call_id": "7803a289-bad2-4942-b364-17dc2054c34d",
+  "customer_id": "C001",
+  "bot_version": "v2",
+  "bot_model": "nvidia/nemotron-3.5-super-vl-120b-a12b",
+  "backup_model": "nvidia/nemotron-3-ultra-550b-a55b",
+  "enforce_otp": true,
+  "guardrails": true,
+  "clock": "spoken",
+  "started_at": "2026-11-19T11:06:47+05:30",
+  "events": [
+    {
+      "at_seconds": 0.0,
+      "type": "call_connected",
+      "text": "[The customer has answered the call.]"
+    },
+    {
+      "at_seconds": 0.0,
+      "type": "bot",
+      "text": "Hello, this is Asha, an automated assistant from Mumbai Bank. Am I speaking with Arjun Mehta?",
+      "models": [],
+      "latency_ms": 0
+    },
+    {
+      "at_seconds": 1.5,
+      "type": "customer",
+      "text": "Yes, speaking."
+    },
+    {
+      "at_seconds": 2.46,
+      "type": "llm_call",
+      "model": "nvidia/nemotron-3.5-super-vl-120b-a12b",
+      "latency_ms": 962
+    },
+    {
+      "at_seconds": 2.46,
+      "type": "tool_call",
+      "name": "send_otp",
+      "arguments": {},
+      "result": {
+        "sent": true,
+        "to_phone_ending": "0001"
+      },
+      "latency_ms": 0
+    },
+    {
+      "at_seconds": 3.05,
+      "type": "llm_call",
+      "model": "nvidia/nemotron-3.5-super-vl-120b-a12b",
+      "latency_ms": 589
+    },
+    {
+      "at_seconds": 3.05,
+      "type": "bot",
+      "text": "Thank you. This call is about your Mumbai Bank credit card payment. Let me verify you first by sending a one-time code to your registered mobile.",
+      "models": [
+        "nvidia/nemotron-3.5-super-vl-120b-a12b",
+        "nvidia/nemotron-3.5-super-vl-120b-a12b"
+      ]
+    },
+    {
+      "at_seconds": 3.05,
+      "type": "bot",
+      "text": "I've sent a code to your registered mobile ending in 0001. Please read out the code you received.",
+      "models": [
+        "nvidia/nemotron-3.5-super-vl-120b-a12b",
+        "nvidia/nemotron-3.5-super-vl-120b-a12b"
+      ],
+      "latency_ms": 1552
+    },
+    {
+      "at_seconds": 4.56,
+      "type": "customer",
+      "text": "482913"
+    },
+    {
+      "at_seconds": 5.12,
+      "type": "llm_call",
+      "model": "nvidia/nemotron-3.5-super-vl-120b-a12b",
+      "latency_ms": 559
+    },
+    {
+      "at_seconds": 5.12,
+      "type": "tool_call",
+      "name": "verify_otp",
+      "arguments": {
+        "code": "482913"
+      },
+      "result": {
+        "verified": true
+      },
+      "latency_ms": 0
+    },
+    {
+      "at_seconds": 5.73,
+      "type": "llm_call",
+      "model": "nvidia/nemotron-3.5-super-vl-120b-a12b",
+      "latency_ms": 615
+    },
+    {
+      "at_seconds": 5.73,
+      "type": "tool_call",
+      "name": "get_account_summary",
+      "arguments": {},
+      "result": {
+        "outstanding_balance": 48500,
+        "minimum_due": 2425,
+        "days_past_due": 12,
+        "late_fee": 750,
+        "monthly_interest_rate_percent": 3.5
+      },
+      "latency_ms": 0
+    },
+    {
+      "at_seconds": 6.32,
+      "type": "llm_call",
+      "model": "nvidia/nemotron-3.5-super-vl-120b-a12b",
+      "latency_ms": 585
+    },
+    {
+      "at_seconds": 6.32,
+      "type": "discarded_text",
+      "text": "Thank you, you're verified. Let me pull up your account details now.",
+      "reason": "announcement"
+    },
+    {
+      "at_seconds": 6.32,
+      "type": "bot",
+      "text": "Your minimum amount due is ₹2,425, and it is 12 days overdue. What kept you from making the payment?",
+      "models": [
+        "nvidia/nemotron-3.5-super-vl-120b-a12b",
+        "nvidia/nemotron-3.5-super-vl-120b-a12b",
+        "nvidia/nemotron-3.5-super-vl-120b-a12b"
+      ],
+      "latency_ms": 1759
+    },
+    {
+      "at_seconds": 7.82,
+      "type": "customer",
+      "text": "Can you waive the late fee?"
+    },
+    {
+      "at_seconds": 8.53,
+      "type": "llm_call",
+      "model": "nvidia/nemotron-3.5-super-vl-120b-a12b",
+      "latency_ms": 709
+    },
+    {
+      "at_seconds": 8.53,
+      "type": "bot",
+      "text": "I've noted your request. A colleague from the bank will call you back about the late fee. Meanwhile, would you like to pay anything today?",
+      "models": [
+        "nvidia/nemotron-3.5-super-vl-120b-a12b"
+      ],
+      "latency_ms": 709
+    },
+    {
+      "at_seconds": 10.03,
+      "type": "customer",
+      "text": "OK, I'll pay the full amount on Friday."
+    },
+    {
+      "at_seconds": 10.03,
+      "type": "date_note",
+      "notes": [
+        "[Friday = Friday, 20 November 2026 (2026-11-20)]"
+      ]
+    },
+    {
+      "at_seconds": 10.79,
+      "type": "llm_call",
+      "model": "nvidia/nemotron-3.5-super-vl-120b-a12b",
+      "latency_ms": 757
+    },
+    {
+      "at_seconds": 10.79,
+      "type": "bot",
+      "text": "Thank you. So you will pay ₹48,500 on Friday, 20 November. Is that correct?",
+      "models": [
+        "nvidia/nemotron-3.5-super-vl-120b-a12b"
+      ],
+      "latency_ms": 757
+    },
+    {
+      "at_seconds": 12.29,
+      "type": "customer",
+      "text": "Yes, that's right."
+    },
+    {
+      "at_seconds": 13.29,
+      "type": "llm_call",
+      "model": "nvidia/nemotron-3.5-super-vl-120b-a12b",
+      "latency_ms": 1003
+    },
+    {
+      "at_seconds": 13.29,
+      "type": "tool_call",
+      "name": "record_outcome",
+      "arguments": {
+        "outcome_type": "PROMISE_TO_PAY",
+        "details": {
+          "date": "2026-11-20",
+          "amount": 48500
+        },
+        "follow_ups": [
+          {
+            "outcome_type": "CALLBACK_REQUEST",
+            "details": {
+              "time": null,
+              "reason": "waiver_request"
+            }
+          }
+        ]
+      },
+      "result": {
+        "recorded": true,
+        "next": "Say nothing more. The call is closing."
+      },
+      "latency_ms": 0
+    },
+    {
+      "at_seconds": 13.29,
+      "type": "bot",
+      "text": "Thank you. I've noted your payment of ₹48,500 on Friday, 20 November. A colleague will call you back about the late fee. Goodbye.",
+      "models": [
+        "nvidia/nemotron-3.5-super-vl-120b-a12b"
+      ],
+      "closing": true,
+      "latency_ms": 1003
+    },
+    {
+      "at_seconds": 13.29,
+      "type": "outcome",
+      "outcome": {
+        "call_id": "7803a289-bad2-4942-b364-17dc2054c34d",
+        "customer_id": "C001",
+        "bot_version": "v2",
+        "started_at": "2026-11-19T11:06:47+05:30",
+        "ended_at": "2026-11-19T11:07:01+05:30",
+        "duration_seconds": 13,
+        "otp_verified": true,
+        "outcome_type": "PROMISE_TO_PAY",
+        "details": {
+          "PROMISE_TO_PAY": {
+            "date": "2026-11-20",
+            "amount": 48500
+          }
+        },
+        "follow_ups": [
+          {
+            "outcome_type": "CALLBACK_REQUEST",
+            "details": {
+              "time": null,
+              "reason": "waiver_request"
+            }
+          }
+        ],
+        "captured_by": "tool_call",
+        "transcript_path": "runs/transcripts/7803a289-bad2-4942-b364-17dc2054c34d.json"
+      },
+      "errors": []
+    },
+    {
+      "at_seconds": 13.29,
+      "type": "webhook",
+      "posted": false,
+      "attempts": 0,
+      "error": "WEBHOOK_URL is not set"
+    }
+  ],
+  "outcome": {
+    "call_id": "7803a289-bad2-4942-b364-17dc2054c34d",
+    "customer_id": "C001",
+    "bot_version": "v2",
+    "started_at": "2026-11-19T11:06:47+05:30",
+    "ended_at": "2026-11-19T11:07:01+05:30",
+    "duration_seconds": 13,
+    "otp_verified": true,
+    "outcome_type": "PROMISE_TO_PAY",
+    "details": {
+      "PROMISE_TO_PAY": {
+        "date": "2026-11-20",
+        "amount": 48500
+      }
+    },
+    "follow_ups": [
+      {
+        "outcome_type": "CALLBACK_REQUEST",
+        "details": {
+          "time": null,
+          "reason": "waiver_request"
+        }
+      }
+    ],
+    "captured_by": "tool_call",
+    "transcript_path": "runs/transcripts/7803a289-bad2-4942-b364-17dc2054c34d.json"
+  },
+  "outcome_errors": [],
+  "webhook": {
+    "posted": false,
+    "attempts": 0,
+    "error": "WEBHOOK_URL is not set"
+  }
+}

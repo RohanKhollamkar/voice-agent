@@ -86,10 +86,13 @@ def comparison(v1, v2, p1, p2) -> str:
         f"- v1: `{Path(p1).name}` ({runs} runs; {meta(v1)})",
         f"- v2: `{Path(p2).name}` ({len({r['run'] for r in v2})} runs; {meta(v2)})",
         "",
-        "Each cell is the failure rate pooled over all runs, with (failed/applicable), then the "
-        "mean across runs with [lowest–highest run]. A call is one scenario in one run. "
-        "Check level: failed checks out of applicable checks. Scenario level: calls with at "
-        "least one failed check.",
+        (
+            "Each cell is the failure rate pooled over all runs, with (failed/applicable), then the "
+            "mean across runs with [lowest–highest run]. A call is one scenario in one run. "
+            "Check level: failed checks out of applicable checks. Scenario level: calls with at "
+            "least one failed check. Calls that were re-judged or could not be judged are listed "
+            "in `run_notes.md`."
+        ),
         "",
         "## Overall",
         "",
@@ -106,10 +109,14 @@ def comparison(v1, v2, p1, p2) -> str:
         ]
         L.append(f"| {label} | {cells[0]} | {cells[1]} |")
     for label, kind in (("Code checks only", "code"), ("Judge checks only", "judge")):
-        cells = [pct(*rate([r for r in rows if r["kind"] == kind])) for rows in (v1, v2)]
+        cells = [
+            pct(*rate([r for r in rows if r["kind"] == kind])) for rows in (v1, v2)
+        ]
         L.append(f"| {label} (check level) | {cells[0]} | {cells[1]} |")
     errors = [sum(r["result"] == "error" for r in rows) for rows in (v1, v2)]
-    L.append(f"| Checks that could not run (judge errors) | {errors[0]} | {errors[1]} |")
+    L.append(
+        f"| Checks that could not run (judge errors) | {errors[0]} | {errors[1]} |"
+    )
 
     L += [
         "",
@@ -124,9 +131,7 @@ def comparison(v1, v2, p1, p2) -> str:
         cells = []
         for rows in (v1, v2):
             sub = [r for r in rows if r["check_category"] == b]
-            cells.append(
-                f"{pct(*rate(sub))}; per run {mean_range(per_run(sub, rate))}"
-            )
+            cells.append(f"{pct(*rate(sub))}; per run {mean_range(per_run(sub, rate))}")
         L.append(f"| {b} | {cells[0]} | {cells[1]} |")
 
     L += [
@@ -152,8 +157,10 @@ def comparison(v1, v2, p1, p2) -> str:
         "",
         "## By scenario",
         "",
-        "Failed checks out of applicable checks, and in how many runs the scenario passed "
-        "every check.",
+        (
+            "Failed checks out of applicable checks, and in how many runs the scenario passed "
+            "every check."
+        ),
         "",
         "| Scenario | Bucket | v1 failed checks | v1 clean runs | v2 failed checks | v2 clean runs |",
         "|---|---|---|---|---|---|",
@@ -167,10 +174,18 @@ def comparison(v1, v2, p1, p2) -> str:
             cells += [pct(*rate(sub)), f"{clean}/{len(c)}"]
         first = next(r for r in v1 + v2 if r["scenario_id"] == sid)
         L.append(
-            f"| {sid} {first['title']} | {first['category']} | " + " | ".join(cells) + " |"
+            f"| {sid} {first['title']} | {first['category']} | "
+            + " | ".join(cells)
+            + " |"
         )
 
-    L += ["", "## Every v2 failure", "", "| Run | Scenario | Check | Evidence |", "|---|---|---|---|"]
+    L += [
+        "",
+        "## Every v2 failure",
+        "",
+        "| Run | Scenario | Check | Evidence |",
+        "|---|---|---|---|",
+    ]
     for r in v2:
         if r["result"] == "fail":
             ev = r["evidence"].replace("|", "/").replace("\n", " ")[:220]
@@ -185,8 +200,10 @@ def held_out(h1, h2, p1, p2) -> str:
     L = [
         "# Held-out scenarios (H01–H05)",
         "",
-        "A test set v2 was never changed for: the scenarios were added after v2 was frozen and "
-        "run once per version. These numbers are kept apart from the main comparison.",
+        (
+            "A test set v2 was never changed for: the scenarios were added after v2 was frozen and "
+            "run once per version. These numbers are kept apart from the main comparison."
+        ),
         "",
         f"- v1: `{Path(p1).name}` ({meta(h1)})",
         f"- v2: `{Path(p2).name}` ({meta(h2)})",
@@ -206,7 +223,9 @@ def held_out(h1, h2, p1, p2) -> str:
             sub = [r for r in rows if r["scenario_id"] == sid]
             fails = [r for r in sub if r["result"] == "fail"]
             outcome = transcript(sub[0]["transcript_path"]).get("outcome") or {}
-            details = (outcome.get("details") or {}).get(outcome.get("outcome_type"), {})
+            details = (outcome.get("details") or {}).get(
+                outcome.get("outcome_type"), {}
+            )
             L.append(
                 f"- **{version}**: {pct(*rate(sub))} of checks failed. Outcome "
                 f"`{outcome.get('outcome_type')}` {json.dumps(details, ensure_ascii=False)} "
@@ -229,7 +248,10 @@ PROTECTS = {
     "fixed opening line": ["identity_before_disclosure", "third_party_disclosure"],
     "forced transfer": ["transfer", "expected_outcome"],
     "time-limit close": ["call_length", "missing_outcome", "expected_outcome"],
-    "outcome nudge that led to a recorded outcome": ["missing_outcome", "expected_outcome"],
+    "outcome nudge that led to a recorded outcome": [
+        "missing_outcome",
+        "expected_outcome",
+    ],
     "sentence blocked (credit_score)": ["credit_score_mention"],
     "sentence blocked (legal)": ["legal_threat_or_advice"],
     "sentence blocked (waiver)": ["waiver_approval"],
@@ -246,7 +268,11 @@ def actions(t: dict) -> Counter:
     c = Counter()
     events = t["events"]
     bots = [e for e in events if e["type"] == "bot"]
-    if bots and bots[0].get("models") == [] and "an automated assistant from Mumbai Bank" in bots[0]["text"]:
+    if (
+        bots
+        and bots[0].get("models") == []
+        and "an automated assistant from Mumbai Bank" in bots[0]["text"]
+    ):
         c["fixed opening line"] += 1
     for i, e in enumerate(events):
         kind = e["type"]
@@ -277,7 +303,11 @@ def actions(t: dict) -> Counter:
             err = str(res.get("error", ""))
             if e.get("recorded_by") == "guardrail":
                 reason = e["arguments"]["details"].get("reason")
-                c["time-limit close" if reason == "call_time_limit" else "forced transfer"] += 1
+                c[
+                    "time-limit close"
+                    if reason == "call_time_limit"
+                    else "forced transfer"
+                ] += 1
             elif name == "record_outcome" and err.startswith("Not recorded"):
                 c["promise refused (not yet agreed)"] += 1
             elif name == "verify_otp" and err.startswith("Refused: no code"):
@@ -296,16 +326,27 @@ def guardrails(v2, h2, p2) -> str:
         in_calls.update(set(a))
     n = len(by_call)
     order = [
-        "fixed opening line", "forced transfer", "time-limit close",
-        "outcome nudge (goodbye)", "outcome nudge (claimed_record_outcome)",
-        "outcome nudge (time_limit)", "outcome nudge (hang_up)",
+        "fixed opening line",
+        "forced transfer",
+        "time-limit close",
+        "outcome nudge (goodbye)",
+        "outcome nudge (claimed_record_outcome)",
+        "outcome nudge (time_limit)",
+        "outcome nudge (hang_up)",
         "outcome nudge that led to a recorded outcome",
-        "claim nudge (send_otp)", "claim nudge (get_account_summary)",
-        "sentence blocked (figure)", "sentence blocked (figure_before_otp)",
-        "sentence blocked (credit_score)", "sentence blocked (legal)",
-        "sentence blocked (waiver)", "promise refused (not yet agreed)",
-        "verify_otp refused (no code sent)", "get_account_summary refused before OTP",
-        "announcement line dropped", "date note added", "time note at 2:30",
+        "claim nudge (send_otp)",
+        "claim nudge (get_account_summary)",
+        "sentence blocked (figure)",
+        "sentence blocked (figure_before_otp)",
+        "sentence blocked (credit_score)",
+        "sentence blocked (legal)",
+        "sentence blocked (waiver)",
+        "promise refused (not yet agreed)",
+        "verify_otp refused (no code sent)",
+        "get_account_summary refused before OTP",
+        "announcement line dropped",
+        "date note added",
+        "time note at 2:30",
         "after-call extraction rejected",
     ]
     order += sorted(set(totals) - set(order))
@@ -324,12 +365,14 @@ def guardrails(v2, h2, p2) -> str:
         "",
         "## Passes that come from code, not the prompt",
         "",
-        "A v2 pass is marked as coming from code when, in that same call, a code guardrail "
-        "acted on what the check tests: for example `identity_before_disclosure` passes in "
-        "every call because the opening line is fixed in code, and a `credit_score_mention` "
-        "pass in a call where a sentence was blocked for credit-score talk is the reply "
-        "check's work, not the prompt's. The remaining passes are the model following the "
-        "prompt (with the code guardrails standing by).",
+        (
+            "A v2 pass is marked as coming from code when, in that same call, a code guardrail "
+            "acted on what the check tests: for example `identity_before_disclosure` passes in "
+            "every call because the opening line is fixed in code, and a `credit_score_mention` "
+            "pass in a call where a sentence was blocked for credit-score talk is the reply "
+            "check's work, not the prompt's. The remaining passes are the model following the "
+            "prompt (with the code guardrails standing by)."
+        ),
         "",
         "| Check | v2 passes | of which code acted in that call | Guardrail actions behind them |",
         "|---|---|---|---|",
@@ -340,7 +383,11 @@ def guardrails(v2, h2, p2) -> str:
             continue
         entry = by_check[r["check"]]
         entry[0] += 1
-        acted = [k for k, checks in PROTECTS.items() if r["check"] in checks and by_call[r["transcript_path"]][k]]
+        acted = [
+            k
+            for k, checks in PROTECTS.items()
+            if r["check"] in checks and by_call[r["transcript_path"]][k]
+        ]
         if acted:
             entry[1] += 1
             entry[2].update(acted)
@@ -357,8 +404,10 @@ def guardrails(v2, h2, p2) -> str:
         )
     L += [
         "",
-        "Checks not listed had no v2 pass in a call where a related guardrail acted, so their "
-        "passes come from the model following the prompt.",
+        (
+            "Checks not listed had no v2 pass in a call where a related guardrail acted, so their "
+            "passes come from the model following the prompt."
+        ),
     ]
     if h2:
         ht = Counter()
@@ -383,22 +432,32 @@ def capture(rows) -> Counter:
         t = transcript(path)
         outcome = t.get("outcome") or {}
         events = t["events"]
+        if not outcome.get("outcome_type"):
+            c["no outcome"] += 1  # also when after-call extraction was rejected
+            continue
         if outcome.get("captured_by") == "post_call_extraction":
             c["read off the transcript after the call (post_call_extraction)"] += 1
             continue
-        if not outcome.get("outcome_type"):
-            c["no outcome"] += 1
-            continue
         rec = next(
-            (e for e in events if e["type"] == "tool_call" and e["name"] == "record_outcome"
-             and e["result"].get("recorded") is True),
+            (
+                e
+                for e in events
+                if e["type"] == "tool_call"
+                and e["name"] == "record_outcome"
+                and e["result"].get("recorded") is True
+            ),
             None,
         )
         if rec and rec.get("recorded_by") == "guardrail":
             reason = rec["arguments"]["details"].get("reason")
-            c["recorded by code (time-limit close)" if reason == "call_time_limit"
-              else "recorded by code (forced transfer)"] += 1
-        elif rec and any(e["type"] == "outcome_nudge" for e in events[: events.index(rec)]):
+            c[
+                "recorded by code (time-limit close)"
+                if reason == "call_time_limit"
+                else "recorded by code (forced transfer)"
+            ] += 1
+        elif rec and any(
+            e["type"] == "outcome_nudge" for e in events[: events.index(rec)]
+        ):
             c["recorded by the bot after a nudge from code"] += 1
         else:
             c["recorded by the bot on its own (record_outcome)"] += 1
@@ -415,14 +474,19 @@ def outcomes(v1, v2, h1, h2) -> str:
         "no outcome",
     ]
     sets = [("v1 main", v1), ("v2 main", v2), ("v1 held-out", h1), ("v2 held-out", h2)]
-    counts = [(name, capture(rows), len({r["transcript_path"] for r in rows})) for name, rows in sets]
+    counts = [
+        (name, capture(rows), len({r["transcript_path"] for r in rows}))
+        for name, rows in sets
+    ]
     L = [
         "# How outcomes were captured",
         "",
-        f"Main runs: {meta(v1)}. A call's outcome is either recorded during the call "
-        "(`captured_by: tool_call`) or read off the transcript after it by the extraction "
-        "model (`captured_by: post_call_extraction`). v1 has a record_outcome tool but no "
-        "nudges or code-recorded outcomes.",
+        (
+            f"Main runs: {meta(v1)}. A call's outcome is either recorded during the call "
+            "(`captured_by: tool_call`) or read off the transcript after it by the extraction "
+            "model (`captured_by: post_call_extraction`). v1 has a record_outcome tool but no "
+            "nudges or code-recorded outcomes."
+        ),
         "",
         "| How | " + " | ".join(name for name, _, _ in counts) + " |",
         "|---|" + "---|" * len(counts),
@@ -441,9 +505,11 @@ def headline(v1, v2, h1, h2) -> str:
         f1, a1 = rate([r for r in v1 if r["check"] == name])
         f2, a2 = rate([r for r in v2 if r["check"] == name])
         if a1 and a2:
-            rules.append((f1 / a1 - f2 / a2, name, f1 / a1, f2 / a2))
-    rules.sort(reverse=True)
-    top = "; ".join(f"{n} {a:.0%} → {b:.0%}" for _, n, a, b in rules[:3])
+            rules.append((round(f1 / a1 - f2 / a2, 2), a1, name, (f1, a1), (f2, a2)))
+    rules.sort(
+        reverse=True
+    )  # biggest drop first; ties go to the rule with more evidence
+    top = "; ".join(f"{n} {pct(*a)} → {pct(*b)}" for _, _, n, a, b in rules[:3])
     s1, s2 = scenario_level(v1), scenario_level(v2)
     c1, c2 = rate(v1), rate(v2)
     hs1, hs2 = scenario_level(h1), scenario_level(h2)
@@ -471,7 +537,12 @@ def main() -> None:
     (OUT / "guardrails.md").write_text(guardrails(v2, h2, p2), encoding="utf-8")
     (OUT / "outcomes.md").write_text(outcomes(v1, v2, h1, h2), encoding="utf-8")
     (OUT / "headline.md").write_text(headline(v1, v2, h1, h2), encoding="utf-8")
-    for path, name in ((p1, "v1_main.csv"), (p2, "v2_main.csv"), (ph1, "v1_heldout.csv"), (ph2, "v2_heldout.csv")):
+    for path, name in (
+        (p1, "v1_main.csv"),
+        (p2, "v2_main.csv"),
+        (ph1, "v1_heldout.csv"),
+        (ph2, "v2_heldout.csv"),
+    ):
         shutil.copy(path, OUT / name)
     print((OUT / "headline.md").read_text(encoding="utf-8"))
 
