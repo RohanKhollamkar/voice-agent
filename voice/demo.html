@@ -122,6 +122,12 @@
   .webhook.bad { background: var(--bad-soft); color: var(--bad); }
   .webhook.wait { background: var(--bot); color: var(--muted); }
 
+  .exports { margin-top: 12px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; display: flex; flex-direction: column; gap: 6px; }
+  .exports-title { font-weight: 600; }
+  .exports a { color: var(--accent); text-decoration: none; font-size: 13px; }
+  .exports a:hover { text-decoration: underline; }
+  .exports .sub { margin: 0; }
+
   @media (max-width: 1000px) { main { grid-template-columns: 1fr; } section { min-height: 360px; } }
 </style>
 </head>
@@ -288,8 +294,9 @@ function onEvent(e) {
     case "voice_latency": return addVoiceLatency(e);
     case "outcome": return showOutcome(e);
     case "webhook": return showWebhook(e);
+    case "export": return showExport(e);
     case "call_over": return callOver();
-    case "llm_call": case "call_connected": case "recording": return;  // not shown
+    case "llm_call": case "call_connected": case "recording": case "voice_agent_time": return;  // not shown
     default: return addEvent(e);
   }
 }
@@ -380,6 +387,26 @@ function showWebhook(e) {
   if (!w) return;
   if (e.posted) { w.className = "webhook ok"; w.textContent = `Webhook delivered: HTTP ${e.status} (attempt ${e.attempts})`; }
   else { w.className = "webhook bad"; w.textContent = `Webhook not delivered: ${e.status ? "HTTP " + e.status : e.error}`; }
+}
+
+function showExport(e) {
+  // The call's files, exported by the server to runs/exports/<call_id>/.
+  const box = clearEmpty("outcome");
+  const files = el("div", "exports");
+  files.append(el("div", "exports-title", "Call files"));
+  const labels = { "recording.wav": "Recording (WAV: customer left, bot right)",
+                   "transcript.txt": "Transcript (text)", "transcript.json": "Transcript (full JSON log)" };
+  for (const name of e.files) {
+    const link = el("a", "", `⬇ ${labels[name] || name}`);
+    link.href = `/api/calls/${call.id}/files/${name}`;
+    link.download = "";
+    files.append(link);
+  }
+  if (!e.files.includes("recording.wav")) {
+    files.append(el("div", "sub", e.error ? `Export failed: ${e.error}` : "No recording: text mode has no audio."));
+  }
+  files.append(el("div", "sub", `Also saved on the server in runs/exports/${call.id}/`));
+  box.append(files);
 }
 
 function callOver() {

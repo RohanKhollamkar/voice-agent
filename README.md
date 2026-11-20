@@ -42,7 +42,7 @@ It serves http://localhost:7860/demo on localhost only (`--open` opens the brows
 - **Voice**: the browser's microphone and speakers over the browser connection (as `voice.call --echo browser`), so echo cancellation and barge-in work. Allow the microphone when asked.
 - **Text**: type the customer's turns. No speech credits.
 
-Three panes update as the call runs: the conversation (with each turn's latency and the call timer, marked at 2:30 and 3:00); behind the scenes (every tool call and guardrail action, timestamped); and the outcome JSON with the webhook's HTTP status. All three come from the events the agent writes to the call's transcript, streamed to the page; the page changes nothing about how the bot behaves. End call is the customer hanging up. The code is `voice/demo.py` and `voice/demo.html`.
+Three panes update as the call runs: the conversation (with each turn's latency and the call timer, marked at 2:30 and 3:00); behind the scenes (every tool call and guardrail action, timestamped); and the outcome JSON with the webhook's HTTP status. All three come from the events the agent writes to the call's transcript, streamed to the page; the page changes nothing about how the bot behaves. End call is the customer hanging up. When a call ends, its files are exported to `runs/exports/<call_id>/` and offered for download in the Outcome pane: `recording.wav` (voice calls; stereo, customer on the left and bot on the right), `transcript.txt` (who said what and when, and the outcome) and `transcript.json` (the full log). The code is `voice/demo.py`, `voice/demo.html` and `voice/export.py`.
 
 ![Demo console after a text-mode call](docs/results/demo_console.png)
 
