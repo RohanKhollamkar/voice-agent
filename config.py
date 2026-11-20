@@ -29,10 +29,16 @@ WEBHOOK_URL: str = _get_str("WEBHOOK_URL")
 # Models (NVIDIA API IDs)
 BOT_MODEL: str = _get_str("BOT_MODEL", "nvidia/nemotron-3.5-super-vl-120b-a12b")
 BACKUP_MODEL: str = _get_str("BACKUP_MODEL", "nvidia/nemotron-3-ultra-550b-a55b")
-JUDGE_MODEL: str = _get_str("JUDGE_MODEL", "nvidia/nemotron-3-ultra-550b-a55b")
+# The eval judge: a non-Nemotron model, chosen in docs/results/final/judge_choice.md.
+JUDGE_MODEL: str = _get_str("JUDGE_MODEL", "moonshotai/kimi-k3.1-pro")
+# Reads the outcome off the transcript when the bot never recorded one (agent logic,
+# not evaluation, so it did not change with the judge).
+EXTRACTION_MODEL: str = _get_str(
+    "EXTRACTION_MODEL", "nvidia/nemotron-3-ultra-550b-a55b"
+)
 
 # Plays the customer in eval scenarios that use a persona instead of scripted turns
-CUSTOMER_MODEL: str = _get_str("CUSTOMER_MODEL", JUDGE_MODEL)
+CUSTOMER_MODEL: str = _get_str("CUSTOMER_MODEL", "nvidia/nemotron-3-ultra-550b-a55b")
 
 # Provider settings
 NVIDIA_BASE_URL: str = _get_str(
@@ -44,6 +50,9 @@ LLM_EXTRA_BODY: dict = {"chat_template_kwargs": {"enable_thinking": False}}
 SARVAM_STT_MODEL: str = _get_str("SARVAM_STT_MODEL", "saaras:v3-realtime")
 # transcribe | codemix | translit | verbatim | translate
 SARVAM_STT_MODE: str = _get_str("SARVAM_STT_MODE", "codemix")
+# A fixed language, not auto-detect: with auto-detect, background noise came out as
+# Bengali text. hi-IN with codemix still transcribes English and Hinglish.
+SARVAM_STT_LANGUAGE: str = _get_str("SARVAM_STT_LANGUAGE", "hi-IN")
 ELEVENLABS_MODEL: str = _get_str("ELEVENLABS_MODEL", "eleven_flash_v2_5")
 
 # Voice turn-taking (latency). Defaults are the settings the measurements chose; see
@@ -61,6 +70,82 @@ SARVAM_STT_SILENCE_MS: int | None = (
     int(os.getenv("SARVAM_STT_SILENCE_MS") or 700) or None
 )
 VAD_STOP_SECS: float = float(os.getenv("VAD_STOP_SECS") or 0.2)  # local VAD silence
+# Local voice detection, tightened against background noise (Pipecat's defaults:
+# confidence 0.7, minimum volume 0.6, start 0.2 s).
+VAD_CONFIDENCE: float = float(os.getenv("VAD_CONFIDENCE") or 0.8)
+VAD_MIN_VOLUME: float = float(os.getenv("VAD_MIN_VOLUME") or 0.7)
+VAD_START_SECS: float = float(os.getenv("VAD_START_SECS") or 0.3)
+# Noise filter (voice/pipeline.py, NoiseFilter): a transcript with fewer real words than
+# this, or in a script other than Latin or Devanagari, is dropped and logged as
+# ignored_noise. Digits (a code, an amount) and the short answers below always pass,
+# because "Yes.", "Friday" or "482913" is one word.
+NOISE_MIN_WORDS: int = int(os.getenv("NOISE_MIN_WORDS") or 2)
+NOISE_SHORT_ANSWERS: frozenset[str] = frozenset(
+    [
+        "yes",
+        "yeah",
+        "yep",
+        "no",
+        "nope",
+        "haan",
+        "han",
+        "ha",
+        "nahi",
+        "nahin",
+        "na",
+        "ok",
+        "okay",
+        "ji",
+        "sure",
+        "right",
+        "correct",
+        "theek",
+        "thik",
+        "hello",
+        "hi",
+        "bye",
+        "speaking",
+        "हाँ",
+        "हां",
+        "हा",
+        "नहीं",
+        "ना",
+        "जी",
+        "ठीक",
+        "हेलो",
+        "हैलो",
+        # One-word answers to "when?"
+        "today",
+        "tomorrow",
+        "monday",
+        "tuesday",
+        "wednesday",
+        "thursday",
+        "friday",
+        "saturday",
+        "sunday",
+        "aaj",
+        "kal",
+        "parso",
+        "आज",
+        "कल",
+        "परसों",
+    ]
+)
+# Barge-in: the customer interrupts the bot only after saying this many words
+# (Pipecat's minimum-words strategy), so a cough or a word of echo does not cut it off.
+BARGE_IN_MIN_WORDS: int = int(os.getenv("BARGE_IN_MIN_WORDS") or 2)
+# Except a short answer made only of these words and/or digits ("Haan", "Yes", "482913"):
+# it interrupts at once, because below the word minimum Pipecat would throw it away.
+BARGE_IN_SHORT_ANSWERS: frozenset[str] = frozenset(
+    ["yes", "yeah", "yep", "no", "nope", "haan", "han", "ha", "nahi", "nahin", "na",
+     "ji", "हाँ", "हां", "हा", "नहीं", "ना", "जी"]
+)  # fmt: skip
+# After the customer interrupts the bot, wait this long for them to say more before
+# the bot replies (their turn may arrive in pieces).
+AFTER_INTERRUPTION_WAIT_SECONDS: float = float(
+    os.getenv("AFTER_INTERRUPTION_WAIT_SECONDS") or 1.0
+)
 USER_SPEECH_TIMEOUT: float = float(
     os.getenv("USER_SPEECH_TIMEOUT") or 0.6
 )  # manual mode
@@ -68,9 +153,21 @@ USER_SPEECH_TIMEOUT: float = float(
 # (0 turns it off).
 VOICE_ACK_AFTER_SECONDS: float = float(os.getenv("VOICE_ACK_AFTER_SECONDS") or 1.5)
 VOICE_ACK_LINE: str = "One moment."
-# Sarvam speech (TTS_PROVIDER=sarvam, the default). An empty voice uses the model's default.
+# Sarvam speech (TTS_PROVIDER=sarvam, the default). bulbul:v4-flash has its own voice
+# list (Sarvam's API returns it for an unknown speaker); ishita_en_customer is a female
+# Indian English customer-service voice. Female alternatives: neha_en_customer,
+# shalini_en_customer, simran_en_customer, sanchita_en_recovery.
 SARVAM_TTS_MODEL: str = _get_str("SARVAM_TTS_MODEL", "bulbul:v4-flash")
-SARVAM_TTS_VOICE: str = _get_str("SARVAM_TTS_VOICE")
+SARVAM_TTS_VOICE: str = _get_str("SARVAM_TTS_VOICE", "ishita_en_customer")
+# The bot's name in both versions (v2's prompt and the line added to v1's).
+BOT_NAME: str = "Asha"
+# v2's first line, spoken by code rather than generated, so it can never mention the card
+# or the dues before the customer has confirmed who they are. v1 (the baseline) still
+# generates its own opening.
+OPENING_LINE: str = (
+    "Hello, this is {bot_name}, an automated assistant from Mumbai Bank. "
+    "Am I speaking with {customer_name}?"
+)
 # Default is "Sarah", an ElevenLabs premade voice. Premade voices work on the free
 # plan; voices from the ElevenLabs library need a paid plan to use over the API.
 ELEVENLABS_VOICE_ID: str = _get_str("ELEVENLABS_VOICE_ID", "EXAVITQu4vr4xnSDxMaL")

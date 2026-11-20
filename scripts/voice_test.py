@@ -10,6 +10,7 @@ Each customer line waits until the bot has finished its reply, except with
 Run from the repo root:
     python -m scripts.voice_test
     python -m scripts.voice_test --barge-in
+    python -m scripts.voice_test --noise 600     (background noise under everything)
     STT_ENDPOINTING=manual python -m scripts.voice_test    (try a turn-taking setting)
 
 It prints the call, its outcome and a latency table, and writes the transcript and
@@ -46,6 +47,37 @@ CHUNK = 320  # 20 ms frames
 CUSTOMER_VOICE = "JBFqnCBsd6RMkjVDRZzb"  # ElevenLabs premade "George"
 QUIET_SECONDS = 1.3  # the bot counts as finished after this much silence
 MAX_CALL_SECONDS = 240
+
+
+class Noise:
+    """Background noise mixed into everything the customer's mic sends: a steady low
+    rumble with a 50 Hz hum, and every few seconds a short louder burst (a clatter, a
+    voice in the next room). Off unless --noise gives a level (RMS, 16-bit)."""
+
+    level = 0.0
+    _rng = np.random.default_rng(7)
+    _brown = 0.0
+    _t = 0
+
+    @classmethod
+    def mix(cls, chunk: bytes) -> bytes:
+        if not cls.level:
+            return chunk
+        n = len(chunk) // 2
+        white = cls._rng.normal(0, 1, n)
+        brown = np.empty(n)
+        for i, w in enumerate(white):  # integrate white noise: a low rumble
+            cls._brown = 0.98 * cls._brown + w
+            brown[i] = cls._brown
+        brown *= cls.level / (np.std(brown) or 1)
+        t = (cls._t + np.arange(n)) / RATE
+        hum = 0.4 * cls.level * np.sin(2 * np.pi * 50 * t)
+        noise = brown + hum
+        if (cls._t // RATE) % 4 == 3 and (cls._t % RATE) < RATE * 0.4:
+            noise += cls._rng.normal(0, 4 * cls.level, n)  # a 0.4 s burst every 4 s
+        cls._t += n
+        samples = np.frombuffer(chunk, dtype=np.int16).astype(float) + noise
+        return np.clip(samples, -32768, 32767).astype(np.int16).tobytes()
 
 
 class Call:
@@ -90,7 +122,9 @@ class CustomerInput(BaseInputTransport):
                 else (silence, b"")
             )
             frame = InputAudioRawFrame(
-                audio=chunk.ljust(CHUNK * 2, b"\0"), sample_rate=RATE, num_channels=1
+                audio=Noise.mix(chunk.ljust(CHUNK * 2, b"\0")),
+                sample_rate=RATE,
+                num_channels=1,
             )
             await self.push_audio_frame(frame)
             await asyncio.sleep(0.02)
@@ -335,6 +369,16 @@ async def main(
         else None
     )
     print(f"\nOutcome: {outcome['outcome_type']} {details} ({outcome['captured_by']})")
+    shown = (
+        "ignored_noise",
+        "voice_turn_joined",
+        "discarded_text",
+        "voice_code_joined",
+    )
+    notes = [e for e in transcript["events"] if e["type"] in shown]
+    for event in notes:
+        extra = event.get("text") or event.get("parts")
+        print(f"  {event['at_seconds']:5.1f}s  {event['type']}: {extra}")
     print_latency(latency_rows(transcript))
     print(f"\nTranscript: {outcome['transcript_path']}")
     print(f"Recording: runs/recordings/{outcome['call_id']}.wav")
@@ -355,5 +399,12 @@ if __name__ == "__main__":
         default=0,
         help="pause this many seconds in the middle of reading out the OTP",
     )
+    parser.add_argument(
+        "--noise",
+        type=float,
+        default=0,
+        help="mix background noise at this level (RMS, 16-bit; 600 is a busy room)",
+    )
     args = parser.parse_args()
+    Noise.level = args.noise
     asyncio.run(main(args.customer, args.version, args.barge_in, args.otp_pause))

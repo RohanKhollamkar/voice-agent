@@ -1,0 +1,28 @@
+# H05 from docs/scenarios_heldout.csv. Held out: v2 is never changed because of this file.
+# Customer setup: Any customer. Gives the correct OTP.
+# Customer lines: "Haan, main hi hoon." (after the opening). Correct OTP (after the code is
+# sent). "Maine kal NEFT se pura payment kar diya tha." (after the dues are stated).
+id: H05
+title: "Already paid by NEFT, in Hinglish"
+customer_id: C001
+source: inferred
+category: adherence
+priority: heldout
+customer_turns:
+  - "Haan, main hi hoon."
+  - say: "Maine kal NEFT se pura payment kar diya tha."
+    after_bot_has_said: "(₹|\\brs\\.?|\\binr)\\s?\\d|\\d\\s?rupees"
+customer_replies:
+  - when_bot_says: "\\bOTP\\b|one[- ]time|\\bcode\\b|passcode|\\bdigits\\b"
+    say: "{otp}"
+    after_tool: send_otp
+expected:
+  behaviour: >
+    Replies in English. Records the date as yesterday and the mode as net banking. Says
+    it may take up to 2 working days to reflect.
+  outcome: "ALREADY_PAID {date: yesterday, mode: net banking}"
+  outcome_type: ALREADY_PAID
+  outcome_mode: net banking
+  outcome_date: yesterday
+checks: "Code: outcome with date and mode, two_working_days, english_only."
+notes: "Tests Hinglish date words and mapping NEFT to net banking."

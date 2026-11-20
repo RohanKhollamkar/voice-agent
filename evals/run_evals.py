@@ -6,9 +6,10 @@ Run from the repo root:
     python -m evals.run_evals --version v1 --scenario S03 S12
     python -m evals.run_evals --version v1 --no-judge --concurrency 3
     python -m evals.run_evals --version v1 --runs 3
+    python -m evals.run_evals --version v2 --set heldout   (the held-out scenarios H01-H05)
 
-Writes runs/results/<version>_<timestamp>.csv (one row per scenario and check) and
-a summary next to it. Transcripts go to runs/transcripts/ as for any call.
+Writes runs/results/<version>[_heldout]_<timestamp>.csv (one row per scenario and
+check, each naming the commit and the judge model) and a summary next to it. Transcripts go to runs/transcripts/ as for any call.
 The scenario file format is described in evals/scenarios/README.md.
 """
 
@@ -17,6 +18,7 @@ import asyncio
 import csv
 import json
 import re
+import subprocess
 from pathlib import Path
 
 import yaml
@@ -30,7 +32,13 @@ from agent.tools import TOOLS
 from evals.checks import Check, run_checks
 from evals.judge import judge_call
 
-SCENARIOS_DIR = Path(__file__).parent / "scenarios"
+# main: S01-S19, the scenarios v2 was built against. heldout: H01-H05, a test set that
+# v2 is never changed for.
+SCENARIO_SETS = {
+    "main": Path(__file__).parent / "scenarios",
+    "heldout": Path(__file__).parent / "scenarios_heldout",
+}
+SCENARIOS_DIR = SCENARIO_SETS["main"]
 CATEGORIES = ("factual", "compliance", "scope_drift", "adherence")
 HANGUP = "[HANGUP]"
 
@@ -56,10 +64,12 @@ When the call is over, or you would hang up, reply with exactly {hangup}.
 """
 
 
-def load_scenarios(only: list[str] | None = None, priority: str = "all") -> list[dict]:
+def load_scenarios(
+    only: list[str] | None = None, priority: str = "all", scenario_set: str = "main"
+) -> list[dict]:
     """Read and check every scenario file. A broken file stops the run with a clear error."""
     scenarios = []
-    for path in sorted(SCENARIOS_DIR.glob("*.yaml")):
+    for path in sorted(SCENARIO_SETS[scenario_set].glob("*.yaml")):
         scenario = yaml.safe_load(path.read_text(encoding="utf-8"))
         for key in (
             "id",
@@ -76,8 +86,8 @@ def load_scenarios(only: list[str] | None = None, priority: str = "all") -> list
             raise ValueError(f"{path.name}: source must be brief or inferred")
         if scenario["category"] not in CATEGORIES:
             raise ValueError(f"{path.name}: category must be one of {list(CATEGORIES)}")
-        if scenario["priority"] not in ("core", "extra"):
-            raise ValueError(f"{path.name}: priority must be core or extra")
+        if scenario["priority"] not in ("core", "extra", "heldout"):
+            raise ValueError(f"{path.name}: priority must be core, extra or heldout")
         if ("customer_turns" in scenario) == ("persona" in scenario):
             raise ValueError(f"{path.name}: give customer_turns or persona, not both")
         if "customer_turns" in scenario:
@@ -504,12 +514,13 @@ async def main(
     post_webhook: bool,
     judge: bool,
     concurrency: int,
+    scenario_set: str = "main",
 ) -> None:
     if not post_webhook:
         config.WEBHOOK_URL = (
             ""  # eval calls are not real outcomes; keep them off the webhook
         )
-    scenarios = load_scenarios(only, priority)
+    scenarios = load_scenarios(only, priority, scenario_set)
     client = AsyncOpenAI(
         api_key=config.NVIDIA_API_KEY, base_url=config.NVIDIA_BASE_URL, max_retries=0
     )
@@ -524,10 +535,15 @@ async def main(
     calls = [(run, scenario) for run in range(1, runs + 1) for scenario in scenarios]
     results = await asyncio.gather(*(one(run, scenario) for run, scenario in calls))
     rows = [row for call_rows in results for row in call_rows]  # in run, scenario order
+    commit = git_commit()
+    for row in rows:  # every result names the code and the judge that produced it
+        row["commit"] = commit
+        row["judge_model"] = config.JUDGE_MODEL if judge else "none"
 
     results_dir = config.RUNS_DIR / "results"
     results_dir.mkdir(parents=True, exist_ok=True)
-    stem = f"{version}_{now():%Y%m%d_%H%M%S}"
+    label = "" if scenario_set == "main" else f"_{scenario_set}"
+    stem = f"{version}{label}_{now():%Y%m%d_%H%M%S}"
     csv_path = results_dir / f"{stem}.csv"
     with csv_path.open("w", newline="", encoding="utf-8") as file:
         writer = csv.DictWriter(file, fieldnames=list(rows[0]))
@@ -535,10 +551,34 @@ async def main(
         writer.writerows(rows)
 
     summary = summarise(rows, version)
+    summary += (
+        f"\nScenario set: {scenario_set}. Commit: {commit}. "
+        f"Judge model: {config.JUDGE_MODEL if judge else 'none'}."
+    )
     if not judge:
         summary += "\nJudge checks were skipped (--no-judge)."
     (results_dir / f"{stem}_summary.txt").write_text(summary + "\n", encoding="utf-8")
     print(f"\n{summary}\n\nResults: {csv_path}")
+
+
+def git_commit() -> str:
+    """The commit the code under test is at, with "+changes" if the tree is not clean."""
+    try:
+        commit = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        dirty = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=no"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return "unknown"
+    return f"{commit}+changes" if dirty else commit
 
 
 if __name__ == "__main__":
@@ -577,6 +617,12 @@ if __name__ == "__main__":
         help="how many calls to run at once (default 1: one after another)",
     )
     parser.add_argument(
+        "--set",
+        choices=list(SCENARIO_SETS),
+        default="main",
+        help="main: S01-S19 (the default); heldout: H01-H05",
+    )
+    parser.add_argument(
         "--post-webhook",
         action="store_true",
         help="also POST each eval call's outcome to WEBHOOK_URL (off by default)",
@@ -592,5 +638,6 @@ if __name__ == "__main__":
             args.post_webhook,
             not args.no_judge,
             args.concurrency,
+            args.set,
         )
     )

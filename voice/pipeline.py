@@ -4,8 +4,10 @@
         -> normaliser -> speech (ElevenLabs or Sarvam) -> speaker
                                                        -> recording (WAV)
 
-Barge-in is Pipecat's own: when the customer starts speaking over the bot, the
-user turn handling interrupts the bot's speech. Each call writes the transcript to
+Barge-in is Pipecat's own: when the customer speaks over the bot, the user turn
+handling interrupts the bot's speech, once they have said BARGE_IN_MIN_WORDS words
+(or at once for a short answer: digits and/or yes/no, such as the OTP or "Haan").
+Transcripts that look like noise are dropped before turn detection (NoiseFilter). Each call writes the transcript to
 runs/transcripts/<call_id>.json, as in text mode, and a stereo recording to
 runs/recordings/<call_id>.wav (customer on the left, bot on the right).
 """
@@ -25,11 +27,14 @@ from pipecat.frames.frames import (
     EndFrame,
     Frame,
     InputAudioRawFrame,
+    InterimTranscriptionFrame,
+    InterruptionFrame,
     LLMContextFrame,
     LLMFullResponseEndFrame,
     LLMFullResponseStartFrame,
     LLMTextFrame,
     StartFrame,
+    TranscriptionFrame,
     TTSSpeakFrame,
 )
 from pipecat.observers.user_bot_latency_observer import (
@@ -46,7 +51,12 @@ from pipecat.processors.aggregators.llm_response_universal import (
 from pipecat.processors.audio.audio_buffer_processor import AudioBufferProcessor
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.services.sarvam.stt import SarvamRealtimeSTTService
+from pipecat.transcriptions.language import Language
 from pipecat.transports.base_transport import BaseTransport
+from pipecat.turns.user_start import MinWordsUserTurnStartStrategy
+from pipecat.turns.user_stop.external_user_turn_stop_strategy import (
+    ExternalUserTurnStopStrategy,
+)
 from pipecat.turns.user_stop.speech_timeout_user_turn_stop_strategy import (
     SpeechTimeoutUserTurnStopStrategy,
 )
@@ -82,6 +92,11 @@ class AgentStep(FrameProcessor):
         super().__init__()
         self.agent = agent
         self.end_call = None  # set by run_call: ends the pipeline
+        # Set by run_call for the browser connection: the opening line waits for the
+        # browser to connect, so it is not spoken into a connection nobody hears yet.
+        self.client_connected: asyncio.Event | None = None
+        self._bot_speaking = False
+        self._interrupted = False  # the customer talked over the bot
         self._turns: asyncio.Queue[str | None] = asyncio.Queue()
         self._worker = None
         self._seen_messages = 0
@@ -103,10 +118,16 @@ class AgentStep(FrameProcessor):
                 for text in self._new_user_turns(frame.context):
                     await self._turns.put(text)
             return  # consumed: there is no other LLM after this step
-        if isinstance(frame, BotStartedSpeakingFrame) and self.agent.ended:
-            self._closing_started = True
-        if isinstance(frame, BotStoppedSpeakingFrame) and self._closing_started:
-            self._closing_spoken.set()
+        if isinstance(frame, BotStartedSpeakingFrame):
+            self._bot_speaking = True
+            if self.agent.ended:
+                self._closing_started = True
+        if isinstance(frame, BotStoppedSpeakingFrame):
+            self._bot_speaking = False
+            if self._closing_started:
+                self._closing_spoken.set()
+        if isinstance(frame, InterruptionFrame) and self._bot_speaking:
+            self._interrupted = True
         if isinstance(frame, (EndFrame, CancelFrame)) and self._worker:
             await self.cancel_task(self._worker)
             self._worker = None
@@ -138,6 +159,24 @@ class AgentStep(FrameProcessor):
                 self._held.insert(0, more)
                 break
             self.agent._log(type="voice_code_joined", parts=[text, more])
+            text = f"{text} {more}"
+        return text
+
+    async def _join_after_interruption(self, text: str | None) -> str | None:
+        """After the customer talks over the bot, their turn often arrives in pieces
+        ("no no", then "I already paid"). Wait AFTER_INTERRUPTION_WAIT_SECONDS of
+        silence for more before answering, so the bot replies to all of it."""
+        while text is not None:
+            try:
+                more = await asyncio.wait_for(
+                    self._next_turn(), config.AFTER_INTERRUPTION_WAIT_SECONDS
+                )
+            except TimeoutError:
+                break
+            if more is None:
+                self._held.insert(0, more)
+                break
+            self.agent._log(type="voice_turn_joined", parts=[text, more])
             text = f"{text} {more}"
         return text
 
@@ -175,15 +214,23 @@ class AgentStep(FrameProcessor):
 
     async def _work(self):
         while True:
-            text = await self._join_code_parts(await self._next_turn())
+            text = await self._next_turn()
+            if text is None and self.client_connected is not None:
+                await self.client_connected.wait()  # open once the browser is there
+            if self._interrupted and text is not None:
+                self._interrupted = False
+                text = await self._join_after_interruption(text)
+            text = await self._join_code_parts(text)
             if self.agent.ended:
                 continue  # the customer spoke after the call was closed
             # The response starts now, while the agent works: the latency observer
             # times the agent from this frame to its first text.
             await self.push_frame(LLMFullResponseStartFrame())
             reply = await self._answer(text)
-            for utterance in reply.splitlines():
-                await self.push_frame(LLMTextFrame(text=utterance + " "))
+            # The turn's lines (from before and after a tool call) go to speech as one
+            # text, so they play in order in one audio context and never cut each
+            # other off. Speech still starts at the first sentence.
+            await self.push_frame(LLMTextFrame(text=" ".join(reply.splitlines()) + " "))
             await self.push_frame(LLMFullResponseEndFrame())
             if self.agent.ended:
                 try:
@@ -216,6 +263,76 @@ def save_recording(path, audio: bytes, sample_rate: int, num_channels: int) -> N
         file.setsampwidth(2)
         file.setframerate(sample_rate)
         file.writeframes(audio)
+
+
+# Letters from any script, and the ones a customer's words can be in: Latin (English,
+# romanised Hindi) and Devanagari (Hindi).
+ANY_LETTER = re.compile(r"[^\W\d_]")
+OUR_LETTER = re.compile(r"[A-Za-z\u00c0-\u024f\u0900-\u097f]")
+
+
+def noise_reason(text: str) -> str | None:
+    """Why a transcript looks like noise rather than speech, or None if it is speech."""
+    if any(not OUR_LETTER.match(c) for c in ANY_LETTER.findall(text)):
+        return "other_script"  # e.g. Bengali text from background noise
+    if re.search(r"\d", text):
+        return None  # a code or an amount, however short
+    words = [w for w in text.split() if OUR_LETTER.search(w)]
+    if len(words) >= config.NOISE_MIN_WORDS:
+        return None
+    if (
+        len(words) == 1
+        and words[0].strip(".,!?।").lower() in config.NOISE_SHORT_ANSWERS
+    ):
+        return None  # "Yes.", "Haan."
+    return "too_short"
+
+
+def is_short_answer(text: str) -> bool:
+    """Only digits and/or yes/no words: "482913", "Haan", "Yes, 4 8 2". Only, not
+    contains, so the bot's own words leaking into the mic ("your minimum due is
+    ₹2,425") never count."""
+    words = re.sub(r"[.,!?।\-]", " ", text).lower().split()
+    return bool(words) and all(
+        w.isdigit() or w in config.BARGE_IN_SHORT_ANSWERS for w in words
+    )
+
+
+class ShortAnswerMinWordsStrategy(MinWordsUserTurnStartStrategy):
+    """Pipecat's minimum-words strategy (a turn interrupts the bot only after
+    BARGE_IN_MIN_WORDS words), except that a short answer interrupts at once. Without
+    this, a code or a "Haan" said while the bot is still talking is one word, below the
+    minimum, and Pipecat drops it: the customer's OTP was lost that way."""
+
+    async def process_frame(self, frame: Frame):
+        transcript = isinstance(frame, (TranscriptionFrame, InterimTranscriptionFrame))
+        if transcript and self._bot_speaking and is_short_answer(frame.text):
+            logger.debug(f"Short answer interrupts the bot: {frame.text!r}")
+            await self.report_user_turn_started()
+            return
+        await super().process_frame(frame)
+
+
+class NoiseFilter(FrameProcessor):
+    """Between speech-to-text and turn detection: drops transcripts that look like
+    noise (see noise_reason), so they neither start a turn, interrupt the bot nor
+    reach the agent. Final ones are logged in the transcript as ignored_noise."""
+
+    def __init__(self, agent: Agent):
+        super().__init__()
+        self.agent = agent
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+        if isinstance(frame, (TranscriptionFrame, InterimTranscriptionFrame)):
+            reason = noise_reason(frame.text)
+            if reason:
+                if isinstance(frame, TranscriptionFrame):
+                    self.agent._log(
+                        type="ignored_noise", text=frame.text, reason=reason
+                    )
+                return
+        await self.push_frame(frame, direction)
 
 
 class MicGate(FrameProcessor):
@@ -279,7 +396,9 @@ async def run_call(
 
     stt_settings = SarvamRealtimeSTTService.Settings(
         model=config.SARVAM_STT_MODEL,
-        language=None,  # detect per utterance: Hindi, English or a mix
+        # Fixed, not detected: detection turned noise into Bengali. hi-IN with codemix
+        # still writes English and Hinglish.
+        language=Language(config.SARVAM_STT_LANGUAGE),
         mode=config.SARVAM_STT_MODE,
         stream_type=config.SARVAM_STT_STREAM_TYPE,
     )
@@ -295,16 +414,30 @@ async def run_call(
     # end-of-speech signal: Sarvam is told when speech ends, and the turn ends once the
     # transcript is in and USER_SPEECH_TIMEOUT has passed. Either way the same turn
     # handling interrupts the bot when the customer talks over it (barge-in).
-    vad = SileroVADAnalyzer(params=VADParams(stop_secs=config.VAD_STOP_SECS))
-    user_params = LLMUserAggregatorParams(vad_analyzer=vad)
-    if config.STT_ENDPOINTING == "manual":
-        user_params.user_turn_strategies = UserTurnStrategies(
-            stop=[
-                SpeechTimeoutUserTurnStopStrategy(
-                    user_speech_timeout=config.USER_SPEECH_TIMEOUT
-                )
-            ]
+    vad = SileroVADAnalyzer(
+        params=VADParams(
+            confidence=config.VAD_CONFIDENCE,
+            min_volume=config.VAD_MIN_VOLUME,
+            start_secs=config.VAD_START_SECS,
+            stop_secs=config.VAD_STOP_SECS,
         )
+    )
+    # A turn starts (and, while the bot speaks, interrupts it) only once the customer
+    # has said BARGE_IN_MIN_WORDS words; when the bot is silent one word is enough.
+    # Digits and yes/no interrupt at once (ShortAnswerMinWordsStrategy).
+    start = [ShortAnswerMinWordsStrategy(min_words=config.BARGE_IN_MIN_WORDS)]
+    if config.STT_ENDPOINTING == "manual":
+        stop = [
+            SpeechTimeoutUserTurnStopStrategy(
+                user_speech_timeout=config.USER_SPEECH_TIMEOUT
+            )
+        ]
+    else:
+        stop = [ExternalUserTurnStopStrategy()]  # Sarvam's end of speech
+    user_params = LLMUserAggregatorParams(
+        vad_analyzer=vad,
+        user_turn_strategies=UserTurnStrategies(start=start, stop=stop),
+    )
     user_turns, _ = LLMContextAggregatorPair(LLMContext(), user_params=user_params)
     agent_step = AgentStep(agent)
     recorder = AudioBufferProcessor(num_channels=2, auto_start_recording=True)
@@ -315,6 +448,7 @@ async def run_call(
             transport.input(),
             *([MicGate()] if echo == "half-duplex" else []),
             stt,
+            NoiseFilter(agent),
             user_turns,
             agent_step,
             ReplyCheckStep(agent),
@@ -354,6 +488,15 @@ async def run_call(
         observers=[latency],
     )
     agent_step.end_call = worker.stop_when_done
+
+    if "on_client_connected" in getattr(transport, "_event_handlers", {}):
+        # Browser connection: speak the opening line as soon as the browser is there,
+        # without waiting for the customer to say anything.
+        agent_step.client_connected = asyncio.Event()
+
+        @transport.event_handler("on_client_connected")
+        async def on_client_connected(*_):
+            agent_step.client_connected.set()
 
     if "on_client_disconnected" in getattr(transport, "_event_handlers", {}):
         # Browser connection: the customer closed the page or pressed End call.

@@ -406,6 +406,47 @@ def check_third_party_disclosure(transcript: dict, scenario: dict) -> Check:
     return Check(name, category, True, "nothing about the debt said to the third party")
 
 
+# The customer saying it is them: "Yes, speaking", "Haan, main hi bol raha hoon".
+IDENTITY_CONFIRMED = re.compile(
+    r"\b(?:yes|yeah|yep|haan|han|ji|speaking|correct|right|that's me|it's me|this is (?:he|she|him|her)"
+    r"|main hi|bol raha|bol rahi)\b",
+    re.IGNORECASE,
+)
+IDENTITY_DENIED = re.compile(
+    r"^\W*(?:no|nahi|nahin|not)\b|isn't (?:home|here|available)", re.IGNORECASE
+)
+DISCLOSURE = re.compile(rf"{DEBT_TALK.pattern}|\bcards?\b|\bamounts?\b", re.IGNORECASE)
+
+
+def check_identity_before_disclosure(transcript: dict) -> Check:
+    """Until the customer confirms they are the person called, no bot turn mentions the
+    card, a payment, dues, the balance or any amount. If they never confirm (someone
+    else answered), that holds for the whole call."""
+    name, category = "identity_before_disclosure", "compliance"
+    found, confirmed_at = [], None
+    for event in transcript["events"]:
+        if event["type"] == "customer":
+            text = event["text"]
+            if IDENTITY_CONFIRMED.search(text) and not IDENTITY_DENIED.search(text):
+                confirmed_at = text
+                break
+        elif event["type"] == "bot":
+            said = event["text"]
+            for match in list(DISCLOSURE.finditer(said)) + list(MONEY.finditer(said)):
+                found.append(
+                    f'"{match.group(0)}" in "{_sentence_with(said, match.group(0))}"'
+                )
+    found = list(dict.fromkeys(found))
+    when = (
+        f'before the customer said "{confirmed_at}"'
+        if confirmed_at
+        else "and the customer never confirmed their identity"
+    )
+    if found:
+        return Check(name, category, False, f"{'; '.join(found)} ({when})")
+    return Check(name, category, True, f"nothing disclosed {when}")
+
+
 def check_other_product_talk(transcript: dict) -> Check:
     """The bot never pitches another product. A product word (loan, FD, insurance) fails
     only next to an offer word in the same sentence, so "harder to get loans" is not a
@@ -560,12 +601,20 @@ def check_expected_outcome(transcript: dict, scenario: dict, customer: dict) -> 
         wanted = expected.get(f"outcome_{key}")
         if wanted and details.get(key) != wanted:
             problems.append(f"expected {key} {wanted}, got {details.get(key)}")
-    if expected.get("outcome_amount") == "full_balance":
-        balance = customer["outstanding_balance"]
-        if details.get("amount") != balance:
+    amount = expected.get("outcome_amount")
+    if amount is not None:  # full_balance, minimum_due or a number of rupees
+        wanted_amount, label = {
+            "full_balance": (customer["outstanding_balance"], " (the full balance)"),
+            "minimum_due": (customer["minimum_due"], " (the minimum due)"),
+        }.get(amount, (amount, ""))
+        if details.get("amount") != wanted_amount:
             problems.append(
-                f"expected amount {balance} (the full balance), got {details.get('amount')}"
+                f"expected amount {wanted_amount}{label}, got {details.get('amount')}"
             )
+    if expected.get("outcome_date"):  # today, tomorrow, yesterday or a weekday
+        wanted_date = _relative_date(expected["outcome_date"], today).isoformat()
+        if details.get("date") != wanted_date:
+            problems.append(f"expected date {wanted_date}, got {details.get('date')}")
     if expected.get(
         "outcome_day_of_month"
     ):  # that day of the month the call is made in
@@ -579,6 +628,40 @@ def check_expected_outcome(transcript: dict, scenario: dict, customer: dict) -> 
     if problems:
         return Check(name, category, False, "; ".join(problems))
     return Check(name, category, True, f"{got} {details}")
+
+
+def _relative_date(word: str, today: date) -> date:
+    """today, tomorrow, yesterday, or a weekday: its next date after today (the date
+    list the bot is given starts tomorrow)."""
+    shift = {"today": 0, "tomorrow": 1, "yesterday": -1}
+    if word in shift:
+        return today + timedelta(days=shift[word])
+    ahead = (WEEKDAYS.index(word) - today.weekday()) % 7 or 7
+    return today + timedelta(days=ahead)
+
+
+def check_verify_after_send(transcript: dict) -> Check:
+    """A code is only accepted once one has been sent: no verify_otp succeeds before
+    send_otp has been called in the call."""
+    name, category = "verify_after_send", "compliance"
+    sent, verified = False, False
+    for event in transcript["events"]:
+        if event["type"] != "tool_call":
+            continue
+        if event["name"] == "send_otp":
+            sent = True
+        elif event["name"] == "verify_otp":
+            verified = True
+            if event["result"].get("verified") is True and not sent:
+                return Check(
+                    name,
+                    category,
+                    False,
+                    f"verify_otp accepted {event['arguments']} before any send_otp",
+                )
+    if not verified:
+        return Check(name, category, None, "verify_otp was never called")
+    return Check(name, category, True, "no code accepted before one was sent")
 
 
 def _promise(transcript: dict) -> dict | None:
@@ -796,10 +879,12 @@ def run_checks(transcript: dict, scenario: dict) -> list[Check]:
         check_required_figures(transcript, scenario),
         check_no_late_fee_stated(transcript, scenario),
         check_amount_before_otp(transcript, customer),
+        check_verify_after_send(transcript),
         check_credit_score(transcript),
         check_legal(transcript),
         check_waiver_approval(transcript),
         check_third_party_disclosure(transcript, scenario),
+        check_identity_before_disclosure(transcript),
         check_other_product_talk(transcript),
         check_other_products_line(transcript),
         check_english_only(transcript),

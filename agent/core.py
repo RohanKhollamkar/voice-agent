@@ -72,6 +72,11 @@ NUDGES = {
         "has not been called. Call record_outcome now with what the customer agreed to. "
         "Say nothing.]"
     ),
+    "announced_record_outcome": (
+        "[Note from the system: you told the customer you would record it, but "
+        "record_outcome has not been called. If the customer has agreed, call "
+        "record_outcome now with what they agreed to. Say nothing.]"
+    ),
     "time_limit": (
         "[Note from the system: the call has reached its time limit. If the customer "
         "agreed to something, call record_outcome now with it. Otherwise record "
@@ -85,7 +90,7 @@ NUDGES = {
 # v2: the bot telling the customer it has done something, by tool. If that tool has
 # not run in this call, the model is nudged once to call it (see _claim_nudge).
 # "I've noted your request" is the waiver line, said while the call goes on, so it is
-# not a claim; "I'll send you a code" is a promise, not a claim.
+# not a claim. Promises ("I'll send you a code") are in ANNOUNCES below.
 CLAIMS = {
     "send_otp": re.compile(
         r"\b(?:i've|i have|i|we've|we have)\s+(?:just\s+)?sent\b"
@@ -103,15 +108,64 @@ CLAIMS = {
         re.IGNORECASE,
     ),
 }
+# v2: the bot promising an action in this turn ("I'll send you a code", "Let me verify
+# that code", "Let me pull up your account") without calling its tool in the same turn,
+# then waiting: the customer waits for a code that was never sent. Checked against the
+# tools called in this turn, since the same action can be promised again later (a new
+# code, a second code to verify). Each tool is nudged at most once per call.
+_PROMISE = r"\b(?:i'll|i will|let me|i'm going to|i am going to|i'm|i am)\s+(?:now\s+|just\s+|quickly\s+)?"
+ANNOUNCES = {
+    "send_otp": re.compile(_PROMISE + r"(?:re)?send(?:ing)?\b", re.IGNORECASE),
+    "verify_otp": re.compile(
+        _PROMISE + r"(?:verify|verifying|check|checking)\s+(?:that|the|this|your)\s+"
+        r"(?:code|otp)\b",
+        re.IGNORECASE,
+    ),
+    "get_account_summary": re.compile(
+        _PROMISE + r"(?:check|checking|pull(?:ing)? up|look(?:ing)? at|fetch(?:ing)?"
+        r"|get(?:ting)?)\s+(?:up\s+)?(?:your\s+)?(?:account|details|records|dues|balance)\b",
+        re.IGNORECASE,
+    ),
+    "record_outcome": re.compile(
+        _PROMISE + r"(?:record|recording|note down|log)\b", re.IGNORECASE
+    ),
+}
 CLAIM_NOTE = (
     "[Note from the system: you told the customer {what}, but {tool} has not been "
-    "called in this call. Call {tool} now, then give the customer your reply again, "
-    "based on what it returns.]"
+    "called. Call {tool} now, then give the customer your reply again, based on what "
+    "it returns.]"
 )
 CLAIMED_WHAT = {
-    "send_otp": "a code has been sent",
-    "get_account_summary": "you checked their account",
+    "send_otp": "a code is being sent or has been sent",
+    "verify_otp": "you are checking the code they read out",
+    "get_account_summary": "you are checking or have checked their account",
 }
+
+
+# v2: text before a tool call that only announces the action ("Let me send a code.",
+# "One moment, I'll check your account."): every sentence is an announcement or a
+# filler. When the turn has more to say after the tool, the announcement is dropped,
+# so the customer hears what happened, not what is about to.
+ANNOUNCEMENT = re.compile(
+    r"^(?:(?:okay|ok|sure|alright|great|thank you|thanks),?\s+)?(?:let me|let's|i'll|i will|i'm going to|i am going to|allow me to|one moment"
+    r"|just a moment|please hold|give me a (?:moment|second))\b",
+    re.IGNORECASE,
+)
+FILLER = re.compile(
+    r"^(?:thank you|thanks|okay|ok|sure|great|alright|all right|got it)\b[^.?!]{0,20}$",
+    re.IGNORECASE,
+)
+
+
+def only_announces(text: str) -> bool:
+    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
+    return (
+        bool(sentences)
+        and all(
+            ANNOUNCEMENT.match(s) or FILLER.match(s.rstrip(".!")) for s in sentences
+        )
+        and any(ANNOUNCEMENT.match(s) for s in sentences)
+    )
 
 
 # Some models write their thinking inline, wrapped in <think> tags. An unclosed
@@ -147,7 +201,7 @@ def build_system_prompt(version: str, customer: dict) -> str:
     """The version's prompt file, with the facts of this call.
 
     v1 gets the account appended, because its prompt says it knows the account. v2's
-    prompt has {today}, {upcoming_dates} and {customer_name} filled in and nothing else:
+    prompt has {bot_name}, {today}, {upcoming_dates} and {customer_name} filled in:
     it gets the account only from get_account_summary, after OTP."""
     prompt_path = PROMPTS_DIR / f"{version}.md"
     prompt = prompt_path.read_text(encoding="utf-8").strip()
@@ -157,13 +211,15 @@ def build_system_prompt(version: str, customer: dict) -> str:
         )
     if version != "v1":
         return (
-            prompt.replace("{today}", spoken_day(now().date(), with_iso=True))
+            prompt.replace("{bot_name}", config.BOT_NAME)
+            .replace("{today}", spoken_day(now().date(), with_iso=True))
             .replace("{upcoming_dates}", upcoming_dates(now().date()))
             .replace("{customer_name}", customer["name"])
         )
 
     context = [
         "Call context:",
+        f"- Your name is {config.BOT_NAME}.",  # the same name as v2's
         f"- Today is {now():%A, %Y-%m-%d}.",
         f"- You are calling {customer['name']}.",
     ]
@@ -229,7 +285,19 @@ class Agent:
 
     async def start(self) -> str:
         """Open the call. Returns the bot's first line."""
-        return await self._reply_to(CALL_CONNECTED, speaker="call_connected")
+        if not self.state.guarded:  # v1: the model writes its own opening
+            return await self._reply_to(CALL_CONNECTED, speaker="call_connected")
+        # v2: a fixed line, so nothing about the card or the dues is said before the
+        # customer confirms who they are. It goes into the history as the bot's turn.
+        self._log(type="call_connected", text=CALL_CONNECTED)
+        started = time.perf_counter()
+        line = config.OPENING_LINE.format(
+            bot_name=config.BOT_NAME,
+            customer_name=mock_bank.get_customer(self.state.customer_id)["name"],
+        )
+        self.messages.append({"role": "user", "content": CALL_CONNECTED})
+        self.messages.append({"role": "assistant", "content": line})
+        return self._say([line], started, [])
 
     async def respond(self, customer_text: str) -> str:
         """Take what the customer said and return what the bot says back."""
@@ -244,6 +312,7 @@ class Agent:
         )
 
     async def _reply_to(self, text: str, speaker: str) -> str:
+        turn_start = len(self.events)  # the events of this turn come after this one
         self._log(type=speaker, text=text)
         started = time.perf_counter()
         content = text
@@ -292,11 +361,11 @@ class Agent:
             # v2: the bot claimed an action whose tool has not run (sent a code, checked
             # the account, recorded the outcome), or said goodbye with no outcome
             # recorded. One nudge; see _nudge and _claim_nudge for what is then said.
-            claim = self._unbacked_claim(pieces)
-            if claim == "record_outcome":
-                await self._nudge("claimed_record_outcome", pieces, models_used)
-            elif claim:
-                await self._claim_nudge(claim, pieces, models_used)
+            kind, tool = self._unbacked_claim(pieces, turn_start)
+            if tool == "record_outcome":
+                await self._nudge(f"{kind}_record_outcome", pieces, models_used)
+            elif tool:
+                await self._claim_nudge(kind, tool, pieces, models_used)
             elif GOODBYE.search(pieces[-1][0]):
                 await self._nudge("goodbye", pieces, models_used)
 
@@ -342,7 +411,12 @@ class Agent:
             return [self._closing()]
         verified = self.state.otp_verified or not config.ENFORCE_OTP
         utterances = []
-        for piece, index in pieces:
+        for number, (piece, index) in enumerate(pieces):
+            before_tool = bool(self.messages[index].get("tool_calls"))
+            if before_tool and number < len(pieces) - 1 and only_announces(piece):
+                self.messages[index]["content"] = ""
+                self._log(type="discarded_text", text=piece, reason="announcement")
+                continue
             reply, blocks = check_reply(piece, self.allowed_numbers, verified)
             for block in blocks:
                 self._log(type="guardrail_block", **block)
@@ -369,36 +443,53 @@ class Agent:
                 self._log(type="discarded_text", text=piece)
             del pieces[before:]
 
-    def _unbacked_claim(self, pieces: list[tuple[str, int]]) -> str | None:
-        """v2: the first tool the bot said this turn it had used, but which has not run
-        in this call. Each tool is nudged for at most once per call."""
-        for tool, pattern in CLAIMS.items():
-            done = (
-                self.state.outcome_type is not None
-                if tool == "record_outcome"
-                else tool in self.state.tools_done
-            )
-            if done or f"claimed_{tool}" in self._nudged:
-                continue
-            if any(pattern.search(piece) for piece, _ in pieces):
-                return tool
-        return None
+    def _called_since(self, tool: str, start: int) -> bool:
+        """Whether the bot called this tool after the event at position start."""
+        return any(
+            e["type"] == "tool_call" and e["name"] == tool for e in self.events[start:]
+        )
+
+    def _unbacked_claim(
+        self, pieces: list[tuple[str, int]], turn_start: int
+    ) -> tuple[str, str | None]:
+        """v2: ("claimed", tool) for an action the bot said it has done whose tool has
+        not run in this call; ("announced", tool) for one it promised this turn ("I'll
+        send", "let me verify") but did not call this turn. ("", None) if neither.
+        Each tool is nudged at most once per call for each kind."""
+        recorded = self.state.outcome_type is not None
+        for kind, patterns in (("claimed", CLAIMS), ("announced", ANNOUNCES)):
+            for tool, pattern in patterns.items():
+                if f"{kind}_{tool}" in self._nudged:
+                    continue
+                if tool == "record_outcome":
+                    done = recorded
+                elif kind == "claimed":
+                    done = tool in self.state.tools_done
+                else:
+                    done = self._called_since(tool, turn_start)
+                if not done and any(pattern.search(piece) for piece, _ in pieces):
+                    return kind, tool
+        return "", None
 
     async def _claim_nudge(
-        self, tool: str, pieces: list[tuple[str, int]], models_used: list[str]
+        self,
+        kind: str,
+        tool: str,
+        pieces: list[tuple[str, int]],
+        models_used: list[str],
     ) -> None:
-        """v2: the bot said it sent a code or checked the account without calling the
-        tool. Ask the model once to call it. If it does and replies again, the new
-        reply replaces the claim; if it does not call it, the claim stands and the
-        answer to the note is not spoken (the verify_otp and figure checks still
-        apply)."""
-        self._nudged.add(f"claimed_{tool}")
-        self._log(type="action_nudge", tool=tool)
+        """v2: the bot said it sent a code, checked the account or verified a code, or
+        promised to, without calling the tool. Ask the model once to call it. If it
+        does and replies again, the new reply replaces what it said; if it does not
+        call it, what it said stands and the answer to the note is not spoken (the
+        verify_otp and figure checks still apply)."""
+        self._nudged.add(f"{kind}_{tool}")
+        self._log(type="action_nudge", tool=tool, kind=kind)
         note = CLAIM_NOTE.format(what=CLAIMED_WHAT[tool], tool=tool)
         self.messages.append({"role": "user", "content": note})
-        before = len(pieces)
+        before, events_before = len(pieces), len(self.events)
         await self._model_rounds(pieces, models_used)
-        called = tool in self.state.tools_done
+        called = self._called_since(tool, events_before)
         replaced = called and len(pieces) > before
         dropped = pieces[:before] if replaced else pieces[before:]
         for piece, index in dropped:
@@ -554,7 +645,7 @@ class Agent:
             )
             self._log(
                 type="post_call_extraction",
-                model=config.JUDGE_MODEL,
+                model=config.EXTRACTION_MODEL,
                 outcome_type=outcome_type,
                 details=details,
                 follow_ups=follow_ups,

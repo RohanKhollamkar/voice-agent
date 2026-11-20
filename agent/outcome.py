@@ -235,7 +235,7 @@ Transcript:
 async def extract_outcome(
     client: AsyncOpenAI, transcript_text: str, today: str
 ) -> tuple[str | None, dict | None, list, str | None]:
-    """Ask JUDGE_MODEL for the outcome of a call that ended without record_outcome.
+    """Ask EXTRACTION_MODEL for the outcome of a call that ended without record_outcome.
 
     Returns (outcome_type, details, follow_ups, error). On failure the first two are
     None and the error says why; the call still produces an outcome record, marked invalid.
@@ -252,7 +252,7 @@ async def extract_outcome(
         try:
             response = await retry_on_rate_limit(
                 lambda: client.chat.completions.create(
-                    model=config.JUDGE_MODEL,
+                    model=config.EXTRACTION_MODEL,
                     messages=[{"role": "user", "content": prompt}],
                     timeout=config.EXTRACTION_TIMEOUT_SECONDS,
                 )

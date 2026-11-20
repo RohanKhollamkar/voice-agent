@@ -7,6 +7,9 @@ The page (voice/demo.html) starts and ends calls and displays what happens. Ever
 pane is fed from the events the agent core writes to the call's transcript, streamed
 to the page as server-sent events; nothing here changes how the bot behaves.
 
+When a call ends, its recording (voice mode) and transcript are exported to
+runs/exports/<call_id>/ (see voice/export.py), and the page offers them for download.
+
 Voice mode uses the browser connection (Pipecat's SmallWebRTC, as in
 `python -m voice.call --echo browser`), so the browser's echo cancellation applies
 and barge-in works. Text mode takes typed customer turns and uses no speech credits.
@@ -26,11 +29,12 @@ from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
 from agent import mock_bank
 from agent.core import Agent
+from voice.export import export_call, export_file
 
 HOST, PORT = "127.0.0.1", 7860
 PAGE = Path(__file__).with_name("demo.html")
@@ -74,13 +78,24 @@ def get_call(call_id: str) -> Call:
     return calls[call_id]
 
 
+def close(call: Call) -> None:
+    """The call has ended and its outcome is settled: export it, then close the stream."""
+    call.over = True
+    try:
+        files = export_call(call.agent.state.call_id)
+        call.publish({"type": "export", "files": files})
+    except OSError as error:  # an export problem must not keep the call open
+        call.publish({"type": "export", "files": [], "error": str(error)})
+    call.publish({"type": "call_over"})
+
+
 async def finish(call: Call) -> None:
-    """Settle the outcome (the agent posts it and logs it), then close the stream."""
+    """Text mode: settle the outcome (the agent posts it and logs it), then close."""
     if call.over:
         return
     call.over = True
     await call.agent.finish()
-    call.publish({"type": "call_over"})
+    close(call)
 
 
 @app.get("/demo", response_class=HTMLResponse)
@@ -156,6 +171,16 @@ async def say(call_id: str, request: SayRequest) -> dict:
     return {"ok": True}
 
 
+@app.get("/api/calls/{call_id}/files/{name}")
+async def download(call_id: str, name: str) -> FileResponse:
+    """An exported file of an ended call, as a download."""
+    get_call(call_id)  # only calls this server ran
+    path = export_file(call_id, name)
+    if path is None:
+        raise HTTPException(404, "No such file for this call")
+    return FileResponse(path, filename=f"call_{call_id[:8]}_{name}")
+
+
 @app.post("/api/calls/{call_id}/end")
 async def end_call(call_id: str) -> dict:
     """The customer hangs up. Voice: close the connection, and the pipeline settles
@@ -212,8 +237,7 @@ def add_voice_routes() -> None:
                         agent=call.agent,
                     )
                 finally:
-                    call.over = True
-                    call.publish({"type": "call_over"})
+                    close(call)  # the recording is written by now (see run_call)
 
             call.task = asyncio.create_task(run())
 
