@@ -291,7 +291,8 @@ function onEvent(e) {
   switch (e.type) {
     case "customer": return addTurn("customer", e.text, e);
     case "bot": return addTurn("bot", e.text, e);
-    case "voice_latency": return addVoiceLatency(e);
+    case "voice_first_audio": return addVoiceLatency(e);
+    case "voice_latency": return;  // Pipecat's stage breakdown: not used for the label
     case "outcome": return showOutcome(e);
     case "webhook": return showWebhook(e);
     case "export": return showExport(e);
@@ -318,10 +319,13 @@ function addTurn(who, text, e) {
 }
 
 function addVoiceLatency(e) {
-  // Voice: end of the customer's speech to the bot's first audio, on the latest bot turn.
+  // Voice: the customer stopping to the bot's first audio (a holding line counts), on
+  // the latest bot turn; for the opening line, the call connecting to its first audio.
+  // A turn with no stop moment gets no label (voice_first_audio_missing, shown on the right).
   if (!call || !call.lastBot || call.lastBot.dataset.voice) return addEvent(e);
   call.lastBot.dataset.voice = "1";
-  call.lastBot.prepend(chip(`${e.total_seconds.toFixed(1)} s to first audio`, e.total_seconds > 3.5));
+  const from = e.measured_from === "call_connected" ? " (from connect)" : "";
+  call.lastBot.prepend(chip(`${e.seconds.toFixed(1)} s to first audio${from}`, e.seconds > 3.5));
 }
 
 const GUARD = {
@@ -329,7 +333,7 @@ const GUARD = {
   action_nudge: "Nudge: call the tool", date_note: "Date note added", timer_note: "Time note (2:30)",
   discarded_text: "Discarded text", extraction_rejected: "Extraction rejected",
   post_call_extraction: "After-call extraction", voice_code_joined: "Code parts joined",
-  voice_ack: "Holding line", llm_error: "Model error", ignored_noise: "Ignored noise",
+  voice_ack: "Holding line", voice_first_audio_missing: "No latency label (customer stop not seen)", llm_error: "Model error", ignored_noise: "Ignored noise",
   voice_turn_joined: "Turn parts joined (after barge-in)",
 };
 function addEvent(e) {

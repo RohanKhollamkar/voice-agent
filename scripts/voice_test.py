@@ -13,7 +13,9 @@ Run from the repo root:
     python -m scripts.voice_test --noise 600     (background noise under everything)
     STT_ENDPOINTING=manual python -m scripts.voice_test    (try a turn-taking setting)
 
-It prints the call, its outcome and a latency table, and writes the transcript and
+It prints the call, its outcome and, per customer line, the time to the bot's first
+audio as the pipeline labels it next to the real gap heard on the fake line; it exits
+with an error if a label is missing or more than 1 s off. It writes the transcript and
 WAV recording as any voice call does.
 """
 
@@ -23,11 +25,11 @@ import base64
 import hashlib
 import io
 import json
-import statistics
 import sys
 import time
 import wave
 from pathlib import Path
+from typing import ClassVar
 
 import httpx
 import numpy as np
@@ -87,6 +89,16 @@ class Call:
     bot_reply_started = 0.0  # when the current run of bot speech began
     customer_busy = False
     customer_done_at = 0.0
+    # For the latency check: when each customer line's speech ended, and when each run
+    # of bot speech began, as heard on this fake line.
+    last_speech_at = 0.0
+    speech_ends: ClassVar[list[float]] = []
+    bot_starts: ClassVar[list[float]] = []
+
+
+def is_speech(chunk: bytes) -> bool:
+    samples = np.frombuffer(chunk, dtype=np.int16).astype(float)
+    return bool(samples.size) and np.sqrt(np.mean(samples**2)) > 200
 
 
 class CustomerInput(BaseInputTransport):
@@ -116,11 +128,14 @@ class CustomerInput(BaseInputTransport):
                 pending = self._lines.get_nowait()
             if not pending and self._lines.empty() and Call.customer_busy:
                 Call.customer_busy, Call.customer_done_at = False, time.monotonic()
+                Call.speech_ends.append(Call.last_speech_at)
             chunk, pending = (
                 (pending[: CHUNK * 2], pending[CHUNK * 2 :])
                 if pending
                 else (silence, b"")
             )
+            if pending and is_speech(chunk):
+                Call.last_speech_at = time.monotonic() + 0.02  # the end of this chunk
             frame = InputAudioRawFrame(
                 audio=Noise.mix(chunk.ljust(CHUNK * 2, b"\0")),
                 sample_rate=RATE,
@@ -145,6 +160,7 @@ class BotOutput(BaseOutputTransport):
             now = time.monotonic()
             if now - Call.bot_spoke_at > 0.6:
                 Call.bot_reply_started = now
+                Call.bot_starts.append(now)
             Call.bot_spoke_at = now
         await asyncio.sleep(len(frame.audio) / 2 / frame.sample_rate)
         return True
@@ -219,6 +235,8 @@ def elevenlabs_speech(text: str) -> bytes:
 async def bot_finished_reply():
     """Wait until the customer's last line has played, the bot has replied after it,
     and the bot has gone quiet."""
+    while not Call.bot_starts:  # the first line waits for the opening line to start
+        await asyncio.sleep(0.05)
     while Call.customer_busy:
         await asyncio.sleep(0.05)
     while Call.bot_reply_started <= Call.customer_done_at - 0.2:
@@ -267,67 +285,79 @@ async def customer(
         await lines.put(audio + b"\0" * RATE * 2)  # the line, then a second of silence
 
 
+LABEL_TOLERANCE_SECONDS = 1.0
+
+
 def latency_rows(transcript: dict) -> list[dict]:
-    """One row per answered customer turn, in seconds. "total" is the time to the bot's
-    first audio, which is the holding line when one was said (ack = 1)."""
-    turns: list[dict] = []
+    """One row per customer line, in seconds:
+    label: the time to first audio the pipeline logged (voice_first_audio), which is
+        what the demo page shows; None if it logged none for the turn;
+    real gap: from the end of the line's speech to the bot's next audio, as heard on
+        this fake line (a holding line counts as audio);
+    agent: the agent's own time on the turn (model calls and tools)."""
+    labels = [
+        e["seconds"]
+        for e in transcript["events"]
+        if e["type"] == "voice_first_audio" and e["measured_from"] == "customer_stopped"
+    ]
+    agent_times, acks, turn = [], [], -1
     for event in transcript["events"]:
         if event["type"] == "customer":
-            turns.append({"models": [], "agent": None, "latency": None, "ack": 0})
-        elif not turns:
-            continue  # the opening line, before the customer has said anything
-        elif event["type"] == "llm_call":
-            turns[-1]["models"].append(event["latency_ms"] / 1000)
-        elif event["type"] == "voice_agent_time" and turns[-1]["agent"] is None:
-            turns[-1]["agent"] = event["seconds"]
-        elif event["type"] == "voice_ack":
-            turns[-1]["ack"] = 1
-        elif event["type"] == "voice_latency" and turns[-1]["latency"] is None:
-            turns[-1]["latency"] = event
+            turn += 1
+            agent_times.append(None)
+            acks.append(0)
+        elif (
+            turn >= 0
+            and event["type"] == "voice_agent_time"
+            and agent_times[turn] is None
+        ):
+            agent_times[turn] = event["seconds"]
+        elif turn >= 0 and event["type"] == "voice_ack":
+            acks[turn] = 1
     rows = []
-    for turn in turns:
-        if turn["latency"] is None:
-            continue  # the turn was never answered (the call ended)
-        parts = turn["latency"]["parts"]
+    for index, ended in enumerate(Call.speech_ends):
+        reply = next((b for b in Call.bot_starts if b > ended), None)
         rows.append(
             {
-                "end of speech": parts.get("endpointing wait", 0),
-                "speech-to-text": parts.get("transcription", 0),
-                "turn detection": parts.get("turn detection", 0),
-                "agent": turn["agent"] or 0,
-                "first model call": turn["models"][0] if turn["models"] else 0,
-                "model calls": len(turn["models"]),
-                "ack": turn["ack"],
-                "speech": parts.get("speech synthesis", 0),
-                "total": turn["latency"]["total_seconds"],
+                "label": labels[index] if index < len(labels) else None,
+                "real gap": round(reply - ended, 2) if reply else None,
+                "agent": agent_times[index] if index < len(agent_times) else None,
+                "ack": acks[index] if index < len(acks) else 0,
             }
         )
     return rows
 
 
-def print_latency(rows: list[dict]) -> None:
-    if not rows:
-        print("No customer turn was answered.")
-        return
-    columns = list(rows[0])
+def print_latency(rows: list[dict]) -> bool:
+    """Print the table and check it. Returns False if any turn has no label, or a label
+    more than LABEL_TOLERANCE_SECONDS away from the real gap."""
+    print("\nTime to the bot's first audio per customer line, seconds")
     print(
-        "\nLatency per turn, seconds from the end of the customer's speech to the bot's audio"
+        f"  {'turn':>4}  {'label':>6}  {'real gap':>8}  {'agent':>6}  {'ack':>3}  check"
     )
-    print("  " + "  ".join(f"{c:>16}" for c in columns))
-    for row in rows:
+    ok = True
+    for number, row in enumerate(rows, start=1):
+        label, real = row["label"], row["real gap"]
+        if real is None:
+            verdict = "no reply heard"
+        elif label is None:
+            verdict, ok = "FAIL: no label", False
+        elif abs(label - real) > LABEL_TOLERANCE_SECONDS:
+            verdict, ok = f"FAIL: off by {abs(label - real):.2f}", False
+        else:
+            verdict = "ok"
+        cells = [
+            f"{v:>6.2f}" if isinstance(v, float) else f"{'-' if v is None else v:>6}"
+            for v in (label, real, row["agent"])
+        ]
         print(
-            "  "
-            + "  ".join(
-                f"{row[c]:>16}" if c in ("model calls", "ack") else f"{row[c]:>16.2f}"
-                for c in columns
-            )
+            f"  {number:>4}  {cells[0]}  {cells[1]:>8}  {cells[2]}  {row['ack']:>3}  {verdict}"
         )
-    medians = {c: statistics.median(r[c] for r in rows) for c in columns}
-    print("  " + "  ".join(f"{medians[c]:>16.2f}" for c in columns) + "   (median)")
     print(
-        "  agent = model calls and tools; with no streaming, the first model call's time is"
-        " its time to first token."
+        f"  Label check (each label within {LABEL_TOLERANCE_SECONDS:g} s of the real gap): "
+        + ("passed" if ok else "FAILED")
     )
+    return ok
 
 
 async def main(
@@ -379,9 +409,11 @@ async def main(
     for event in notes:
         extra = event.get("text") or event.get("parts")
         print(f"  {event['at_seconds']:5.1f}s  {event['type']}: {extra}")
-    print_latency(latency_rows(transcript))
+    ok = print_latency(latency_rows(transcript))
     print(f"\nTranscript: {outcome['transcript_path']}")
     print(f"Recording: runs/recordings/{outcome['call_id']}.wav")
+    if not ok:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
