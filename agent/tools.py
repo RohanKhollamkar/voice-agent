@@ -9,7 +9,7 @@ from datetime import datetime
 
 import config
 from agent import mock_bank
-from agent.guardrails import promise_problems
+from agent.guardrails import callback_problems, promise_problems
 from agent.outcome import (
     CALLBACK_REASONS,
     OUTCOME_TYPES,
@@ -134,6 +134,19 @@ def record_outcome(
                 + "; ".join(problems)
                 + ". Read the date and amount back to the customer, ask them to confirm, "
                 "and record only after they say yes.",
+            }
+    if state.guarded and outcome_type == "CALLBACK_REQUEST":
+        # A callback reason must come from the call, not be guessed ("busy").
+        problems = callback_problems(
+            details, state.customer_turns, state.otp_failed_attempts
+        )
+        if problems:
+            return {
+                "recorded": False,
+                "error": "Not recorded: "
+                + "; ".join(problems)
+                + ". Record a callback only with a reason the customer gave. If the call "
+                "ends with nothing agreed, the system records it.",
             }
     state.outcome_type = outcome_type
     state.outcome_details = details

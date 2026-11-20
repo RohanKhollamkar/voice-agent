@@ -26,6 +26,7 @@ CALLBACK_REASONS = (
     "wrong_party",
     "call_time_limit",
     "verification_failed",
+    "call_dropped",  # the call ended with nothing agreed and no reason given
 )
 TRANSFER_REASONS = ("abusive", "medical_emergency", "job_loss", "customer_request")
 CAPTURED_BY = ("tool_call", "post_call_extraction")
@@ -221,6 +222,11 @@ outcome_type and its details must be one of:
 - CALLBACK_REQUEST: {{"time": ISO-8601 date-time or null, "reason": one of {callback}}}
 - DISPUTE: {{"reason": "free text"}}
 - TRANSFER_TO_HUMAN: {{"reason": one of {transfer}}}
+
+A CALLBACK_REQUEST reason must be supported by the transcript: "busy" only if the
+customer said they are busy or asked to be called later; "verification_failed" only if a
+code was read out and did not match. If the call ended with nothing agreed and no reason
+given, use CALLBACK_REQUEST with reason "call_dropped" and time null.
 
 follow_ups is usually empty. Use it only for a second thing a human must act on. The one
 case so far: the customer asked for a late-fee waiver AND promised to pay. Then the

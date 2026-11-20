@@ -26,6 +26,7 @@ from agent import mock_bank
 from agent.dates import date_notes
 from agent.guardrails import (
     GOODBYE,
+    callback_problems,
     check_reply,
     closing_line,
     config_numbers,
@@ -84,7 +85,8 @@ NUDGES = {
     ),
     "hang_up": (
         "[Note from the system: the customer has hung up. If they agreed to something, "
-        "call record_outcome now with it. Say nothing.]"
+        "call record_outcome now with it. If nothing was agreed and they gave no "
+        "reason, record nothing: the system records it. Say nothing.]"
     ),
 }
 # v2: the bot telling the customer it has done something, by tool. If that tool has
@@ -681,30 +683,42 @@ class Agent:
 
     def _supported(
         self, outcome_type: str | None, details: dict | None, follow_ups: list
-    ) -> tuple[str | None, dict | None, list]:
-        """v2: the post-call extraction may only produce a promise to pay that the
-        customer's own words support (date and amount). Otherwise the call has no
-        outcome, flagged in the transcript, unless it ran out of time, in which case it
-        is a callback for the time limit. A promise is never invented."""
-        if outcome_type != "PROMISE_TO_PAY":
-            return outcome_type, details, follow_ups
-        customer = mock_bank.get_customer(self.state.customer_id)
-        problems = [
-            problem
-            for problem in promise_problems(
-                details,
-                self.state.customer_turns,
-                customer,
-                self.state.started_at.date(),
+    ) -> tuple[str, dict, list]:
+        """v2: the post-call extraction follows the same evidence rules as the bot. A
+        promise to pay needs the customer's own date and amount; a callback for "busy"
+        needs them to have asked for a later time; "verification_failed" needs a failed
+        code. When the extraction failed or its outcome is not supported, code records
+        CALLBACK_REQUEST call_dropped (call_time_limit if the call ran out of time).
+        Nothing is invented."""
+        problems: list[str] = []
+        if outcome_type is None:
+            problems = ["the extraction returned no outcome"]
+        elif outcome_type == "PROMISE_TO_PAY":
+            customer = mock_bank.get_customer(self.state.customer_id)
+            problems = [
+                problem
+                for problem in promise_problems(
+                    details,
+                    self.state.customer_turns,
+                    customer,
+                    self.state.started_at.date(),
+                )
+                if "last reply" not in problem  # a hang-up after the promise counts
+            ]
+        elif outcome_type == "CALLBACK_REQUEST":
+            problems = callback_problems(
+                details, self.state.customer_turns, self.state.otp_failed_attempts
             )
-            if "last reply" not in problem  # a hang-up after the promise still counts
-        ]
         if not problems:
             return outcome_type, details, follow_ups
         self._log(type="extraction_rejected", details=details, problems=problems)
-        if self.elapsed_seconds() >= config.CALL_MAX_SECONDS:
-            return "CALLBACK_REQUEST", {"time": None, "reason": "call_time_limit"}, []
-        return None, None, []
+        reason = (
+            "call_time_limit"
+            if self.elapsed_seconds() >= config.CALL_MAX_SECONDS
+            else "call_dropped"
+        )
+        self._log(type="outcome_fallback", reason=reason)
+        return "CALLBACK_REQUEST", {"time": None, "reason": reason}, []
 
     def _transcript_text(self) -> str:
         """The spoken turns only, as plain lines, for the post-call extraction."""

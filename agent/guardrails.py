@@ -253,6 +253,29 @@ def promise_problems(
     return problems
 
 
+# The customer saying they are busy, or asking to be called at another time.
+LATER = re.compile(
+    r"\bbusy\b|\blater\b|call (?:me )?(?:back|after|tomorrow|in|at)\b|\bafter \d"
+    r"|\btomorrow\b|not a good time|in a meeting|\bdriving\b|baad mein|abhi nahi"
+    r"|\bevening\b|\bshaam\b",
+    re.IGNORECASE,
+)
+
+
+def callback_problems(
+    details: dict, customer_turns: list[str], failed_otp_attempts: int
+) -> list[str]:
+    """Why a callback reason is not supported by the call ([] if it is). "busy" needs
+    the customer to have said they are busy or asked for a later time;
+    "verification_failed" needs at least one code that failed verification."""
+    reason = details.get("reason")
+    if reason == "busy" and not LATER.search(" ".join(customer_turns)):
+        return ["the customer has not said they are busy or asked to be called later"]
+    if reason == "verification_failed" and failed_otp_attempts < 1:
+        return ["no code has failed verification in this call"]
+    return []
+
+
 def spoken_seconds(turns: list[str]) -> int:
     """How long the call has taken, estimated from the words spoken: the same estimate
     the evals use, at a normal speaking rate plus a second per turn."""
@@ -333,6 +356,8 @@ def closing_line(
         )
     if reason == "verification_failed":
         return "I'm sorry, I couldn't verify you, so a colleague will call you back. Goodbye."
+    if reason == "call_dropped":
+        return "Thank you. A colleague will call you back. Goodbye."
     if reason == "call_time_limit":
         return "We're out of time for today, so a colleague will call you back. Thank you, goodbye."
     return f"Thank you. We'll call back {_spoken_time(details.get('time'), today)}. Goodbye."
