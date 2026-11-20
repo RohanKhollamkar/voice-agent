@@ -390,7 +390,11 @@ function showWebhook(e) {
   const w = $("webhook");
   if (!w) return;
   if (e.posted) { w.className = "webhook ok"; w.textContent = `Webhook delivered: HTTP ${e.status} (attempt ${e.attempts})`; }
-  else { w.className = "webhook bad"; w.textContent = `Webhook not delivered: ${e.status ? "HTTP " + e.status : e.error}`; }
+  else {
+    w.className = "webhook bad";
+    w.textContent = `Webhook not delivered: ${e.status ? "HTTP " + e.status : "connection failed"} (${e.attempts} attempts)`;
+    w.title = e.error || "";  // the full error on hover
+  }
 }
 
 function showExport(e) {

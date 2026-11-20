@@ -25,6 +25,10 @@ SARVAM_API_KEY: str = _get_str("SARVAM_API_KEY")
 ELEVENLABS_API_KEY: str = _get_str("ELEVENLABS_API_KEY")
 NVIDIA_API_KEY: str = _get_str("NVIDIA_API_KEY")
 WEBHOOK_URL: str = _get_str("WEBHOOK_URL")
+# The webhook is tried twice. Before the retry: the server's Retry-After, capped at
+# WEBHOOK_RETRY_MAX_WAIT, or else WEBHOOK_RETRY_WAIT seconds.
+WEBHOOK_RETRY_WAIT: float = 1.0
+WEBHOOK_RETRY_MAX_WAIT: float = 5.0
 
 # Models (NVIDIA API IDs)
 BOT_MODEL: str = _get_str("BOT_MODEL", "nvidia/nemotron-3.5-super-vl-120b-a12b")
