@@ -274,10 +274,11 @@ def rupees(amount: float) -> str:
 
 
 def _spoken_date(iso: str, today: date) -> str:
+    """When, as said in a sentence: "today", "tomorrow", "yesterday" or "on Friday,
+    20 November" (the preposition is part of it, so "on today" never comes out)."""
     day = date.fromisoformat(iso)
-    if day == today:
-        return "today"
-    return f"{day:%A}, {day.day} {day:%B}"
+    near = {0: "today", 1: "tomorrow", -1: "yesterday"}.get((day - today).days)
+    return near or f"on {day:%A}, {day.day} {day:%B}"
 
 
 def _spoken_time(iso: str | None, today: date) -> str:
@@ -301,8 +302,8 @@ def closing_line(
     reason = details.get("reason")
     if outcome_type == "PROMISE_TO_PAY":
         line = (
-            f"Thank you. I've noted your payment of {rupees(details['amount'])} "
-            f"on {_spoken_date(details['date'], today)}."
+            f"Thank you. I've noted that you will pay {rupees(details['amount'])} "
+            f"{_spoken_date(details['date'], today)}."
         )
         if any(
             f.get("details", {}).get("reason") == "waiver_request" for f in follow_ups
@@ -311,7 +312,7 @@ def closing_line(
         return line + " Goodbye."
     if outcome_type == "ALREADY_PAID":
         return (
-            f"Thank you. Your {details['mode']} payment on "
+            f"Thank you. Your {details['mode']} payment "
             f"{_spoken_date(details['date'], today)} may take up to 2 working days to "
             "reflect. Goodbye."
         )
