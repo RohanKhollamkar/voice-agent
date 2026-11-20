@@ -5,7 +5,8 @@
                                                        -> recording (WAV)
 
 Barge-in is Pipecat's own: when the customer speaks over the bot, the user turn
-handling interrupts the bot's speech, once they have said BARGE_IN_MIN_WORDS words.
+handling interrupts the bot's speech, once they have said BARGE_IN_MIN_WORDS words
+(or at once for a short answer: digits and/or yes/no, such as the OTP or "Haan").
 Transcripts that look like noise are dropped before turn detection (NoiseFilter). Each call writes the transcript to
 runs/transcripts/<call_id>.json, as in text mode, and a stereo recording to
 runs/recordings/<call_id>.wav (customer on the left, bot on the right).
@@ -287,6 +288,31 @@ def noise_reason(text: str) -> str | None:
     return "too_short"
 
 
+def is_short_answer(text: str) -> bool:
+    """Only digits and/or yes/no words: "482913", "Haan", "Yes, 4 8 2". Only, not
+    contains, so the bot's own words leaking into the mic ("your minimum due is
+    ₹2,425") never count."""
+    words = re.sub(r"[.,!?।\-]", " ", text).lower().split()
+    return bool(words) and all(
+        w.isdigit() or w in config.BARGE_IN_SHORT_ANSWERS for w in words
+    )
+
+
+class ShortAnswerMinWordsStrategy(MinWordsUserTurnStartStrategy):
+    """Pipecat's minimum-words strategy (a turn interrupts the bot only after
+    BARGE_IN_MIN_WORDS words), except that a short answer interrupts at once. Without
+    this, a code or a "Haan" said while the bot is still talking is one word, below the
+    minimum, and Pipecat drops it: the customer's OTP was lost that way."""
+
+    async def process_frame(self, frame: Frame):
+        transcript = isinstance(frame, (TranscriptionFrame, InterimTranscriptionFrame))
+        if transcript and self._bot_speaking and is_short_answer(frame.text):
+            logger.debug(f"Short answer interrupts the bot: {frame.text!r}")
+            await self.report_user_turn_started()
+            return
+        await super().process_frame(frame)
+
+
 class NoiseFilter(FrameProcessor):
     """Between speech-to-text and turn detection: drops transcripts that look like
     noise (see noise_reason), so they neither start a turn, interrupt the bot nor
@@ -398,7 +424,8 @@ async def run_call(
     )
     # A turn starts (and, while the bot speaks, interrupts it) only once the customer
     # has said BARGE_IN_MIN_WORDS words; when the bot is silent one word is enough.
-    start = [MinWordsUserTurnStartStrategy(min_words=config.BARGE_IN_MIN_WORDS)]
+    # Digits and yes/no interrupt at once (ShortAnswerMinWordsStrategy).
+    start = [ShortAnswerMinWordsStrategy(min_words=config.BARGE_IN_MIN_WORDS)]
     if config.STT_ENDPOINTING == "manual":
         stop = [
             SpeechTimeoutUserTurnStopStrategy(

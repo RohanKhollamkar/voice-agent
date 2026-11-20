@@ -135,6 +135,12 @@ NOISE_SHORT_ANSWERS: frozenset[str] = frozenset(
 # Barge-in: the customer interrupts the bot only after saying this many words
 # (Pipecat's minimum-words strategy), so a cough or a word of echo does not cut it off.
 BARGE_IN_MIN_WORDS: int = int(os.getenv("BARGE_IN_MIN_WORDS") or 2)
+# Except a short answer made only of these words and/or digits ("Haan", "Yes", "482913"):
+# it interrupts at once, because below the word minimum Pipecat would throw it away.
+BARGE_IN_SHORT_ANSWERS: frozenset[str] = frozenset(
+    ["yes", "yeah", "yep", "no", "nope", "haan", "han", "ha", "nahi", "nahin", "na",
+     "ji", "हाँ", "हां", "हा", "नहीं", "ना", "जी"]
+)  # fmt: skip
 # After the customer interrupts the bot, wait this long for them to say more before
 # the bot replies (their turn may arrive in pieces).
 AFTER_INTERRUPTION_WAIT_SECONDS: float = float(
