@@ -41,7 +41,8 @@ The reviewers will read the code and ask us to walk through it. Prefer small, re
 | Model provider | NVIDIA API (build.nvidia.com), called directly | Pipecat `NvidiaLLMService`; base URL `https://integrate.api.nvidia.com/v1`; key in `NVIDIA_API_KEY`. No OpenRouter |
 | Language model (bot) | `nvidia/nemotron-3.5-super-vl-120b-a12b`, thinking off | Nemotron 3 Super was retired on the NVIDIA API (16 Nov) |
 | Backup bot model | Nemotron 3 Ultra | Used on timeout or error |
-| Judge model (evals) | Kimi K3.1 Pro (`moonshotai/kimi-k3.1-pro`) | Non-Nemotron, chosen in Stage 6 (docs/results/final/judge_choice.md). Post-call extraction and the simulated customer stay on Nemotron 3 Ultra |
+| Judge model (evals) | `moonshotai/kimi-k3.1-pro` | Chosen in the final evaluation pass (docs/results/final/judge_choice.md): a different family from the bot. No Llama, Qwen or DeepSeek model is on the NVIDIA API |
+| After-call extraction, simulated customer | Nemotron 3 Ultra (`EXTRACTION_MODEL`, `CUSTOMER_MODEL`) | Separate settings from the judge since the final pass |
 
 `config.py` is the source of truth for exact model IDs. If a model ID here and in `config.py` disagree, `config.py` wins; update this table, never the reverse.
 | Speech | ElevenLabs Flash v2.5 | Behind a swappable interface; Sarvam Bulbul V4 Flash is the alternative |
