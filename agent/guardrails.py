@@ -28,7 +28,15 @@ SAFE_LINES = {
     "waiver": "I've noted your request. A colleague from the bank will call you back about the late fee.",
     "figure_before_otp": "I can share the details as soon as you're verified.",
     "figure": "A colleague will confirm the exact figure.",
+    "tool_name": "",  # v2.1: the sentence is dropped, with nothing said in its place
 }
+
+# v2.1: the bot naming its own tools to the customer ("I'll call send_otp now").
+TOOL_NAME = re.compile(
+    r"\b(?:send_otp|verify_otp|get_account_summary|record_outcome)\b"
+    r"|\b(?:tool|function) call\b",
+    re.IGNORECASE,
+)
 
 CREDIT_SCORE = re.compile(
     r"cibil|credit\s*(?:score|rating|report|history|record|bureau)s?|creditworth\w*",
@@ -131,17 +139,20 @@ def numbers_in(text: str) -> set[float]:
 
 
 def check_reply(
-    text: str, allowed: set[float], verified: bool
+    text: str, allowed: set[float], verified: bool, tool_names: bool = False
 ) -> tuple[str, list[dict]]:
     """Check a reply sentence by sentence before it is spoken.
 
     allowed: the numbers the bot may say, from config, tool results and the customer.
+    tool_names (v2.1): also drop sentences that name the bot's tools.
     Returns the reply to speak and one entry per blocked sentence.
     """
     spoken, blocks = [], []
     for sentence in _sentences(MARKUP.sub(" ", text)):
         rule = None
-        if CREDIT_SCORE.search(sentence):
+        if tool_names and TOOL_NAME.search(sentence):
+            rule = "tool_name"
+        elif CREDIT_SCORE.search(sentence):
             rule = "credit_score"
         elif LEGAL.search(sentence):
             rule = "legal"
@@ -164,7 +175,7 @@ def check_reply(
         blocks.append(
             {"rule": rule, "sentence": sentence, "replaced_with": SAFE_LINES[rule]}
         )
-        if SAFE_LINES[rule] not in spoken:  # say each safe line once
+        if SAFE_LINES[rule] and SAFE_LINES[rule] not in spoken:  # each safe line once
             spoken.append(SAFE_LINES[rule])
     return " ".join(spoken), blocks
 
@@ -253,6 +264,70 @@ def promise_problems(
     return problems
 
 
+# The customer saying they are busy, or asking to be called at another time.
+LATER = re.compile(
+    r"\bbusy\b|\blater\b|call (?:me )?(?:back|after|tomorrow|in|at)\b|\bafter \d"
+    r"|\btomorrow\b|not a good time|in a meeting|\bdriving\b|baad mein|abhi nahi"
+    r"|\bevening\b|\bshaam\b",
+    re.IGNORECASE,
+)
+
+
+def callback_problems(
+    details: dict, customer_turns: list[str], failed_otp_attempts: int
+) -> list[str]:
+    """Why a callback reason is not supported by the call ([] if it is). "busy" needs
+    the customer to have said they are busy or asked for a later time;
+    "verification_failed" needs at least one code that failed verification."""
+    reason = details.get("reason")
+    if reason == "busy" and not LATER.search(" ".join(customer_turns)):
+        return ["the customer has not said they are busy or asked to be called later"]
+    if reason == "verification_failed" and failed_otp_attempts < 1:
+        return ["no code has failed verification in this call"]
+    return []
+
+
+# A customer line that is itself a promise ("OK, I'll pay on Friday"), not a yes to a
+# read-back.
+OWN_PROMISE = re.compile(
+    r"\bpay\b|\bpaying\b|\bbhar\b|\bbharunga|\bd(?:u|oo)ng[aei]\b|\bkar(?:u|oo)ng[aei]\b"
+    r"|\bjama\b",
+    re.IGNORECASE,
+)
+
+
+def readback_problems(
+    details: dict, turns: list[tuple[str, str]], today: date
+) -> list[str]:
+    """v2.1: a promise is recorded only after a read-back. Some earlier bot turn in the
+    call must state the promised amount and date, and a later customer turn must agree
+    to it: a yes-word in its first few words, and not a promise of its own."""
+    try:
+        promised = date.fromisoformat(str(details.get("date")))
+    except ValueError:
+        return []  # promise_problems already reports a date that is not a date
+    read_back = [
+        index
+        for index, (speaker, text) in enumerate(turns)
+        if speaker == "bot"
+        and details.get("amount") in numbers_in(text)
+        and promised in dates_meant(text, today)
+    ]
+    if not read_back:
+        return ["you have not read the date and amount back to the customer"]
+    agreed = any(
+        speaker == "customer"
+        and AGREEMENT.search(" ".join(text.split()[:6]))
+        and not OWN_PROMISE.search(text)
+        for speaker, text in turns[read_back[-1] + 1 :]
+    )
+    if not agreed:
+        return [
+            "the customer has not said yes to your read-back of the date and amount"
+        ]
+    return []
+
+
 def spoken_seconds(turns: list[str]) -> int:
     """How long the call has taken, estimated from the words spoken: the same estimate
     the evals use, at a normal speaking rate plus a second per turn."""
@@ -286,15 +361,62 @@ def _spoken_time(iso: str | None, today: date) -> str:
         return "later"
     moment = datetime.fromisoformat(iso)
     clock = f"{moment:%I:%M %p}".lstrip("0").replace(":00", "").lower()
-    day = (
-        "today"
-        if moment.date() == today
-        else f"on {moment:%A}, {moment.day} {moment:%B}"
-    )
-    return f"{day} at {clock}"
+    near = {0: "today", 1: "tomorrow"}.get((moment.date() - today).days)
+    return f"{near or f'on {moment:%A}, {moment.day} {moment:%B}'} at {clock}"
+
+
+def future_callback_time(iso: str | None, now: datetime) -> str | None:
+    """v2.1: a callback time already past ("after 6 pm", said at 7:06 pm) moves to the
+    same time the next day. A time with no zone is taken as the bank's time zone."""
+    if not iso:
+        return iso
+    moment = datetime.fromisoformat(iso)
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=now.tzinfo)
+    while moment <= now:
+        moment += timedelta(days=1)
+    return moment.isoformat()
+
+
+# v2.1: the customer asking about another product. The bot's answer is then the brief's
+# exact line, spoken by code, and the model's own sentences about products are dropped.
+PRODUCT_ASK = re.compile(
+    r"\b(?:fds?|fixed deposits?|loans?|insurance|mutual funds?|investments?|savings "
+    r"account|personal loan|home loan|car loan|bima|karz|karza)\b|एफडी|लोन|बीमा|ऋण",
+    re.IGNORECASE,
+)
+PRODUCT_TALK = re.compile(
+    r"\b(?:fds?|fixed deposits?|loans?|insurance|mutual funds?|investments?|savings "
+    r"account|branch|helpline)\b|only here for your pending payment",
+    re.IGNORECASE,
+)
+
+
+def without_product_talk(text: str) -> str:
+    """The reply with every sentence about other products (or the model's own version
+    of the brief's line) taken out."""
+    sentences = re.split(r"(?<=[.!?])\s+", text.strip())
+    return " ".join(s for s in sentences if s and not PRODUCT_TALK.search(s))
 
 
 def closing_line(
+    outcome_type: str,
+    details: dict,
+    follow_ups: list,
+    today: date,
+    helpline: bool = False,
+) -> str:
+    """The last thing the bot says, built from the recorded outcome. helpline (v2.1):
+    end with config.HELPLINE_LINE instead of "Goodbye" (not on a transfer, where a
+    colleague takes over the call)."""
+    line = _closing_line(outcome_type, details, follow_ups, today)
+    if helpline and outcome_type != "TRANSFER_TO_HUMAN":
+        line = re.sub(r"\s*(?:Thank you, )?goodbye\.$", "", line, flags=re.IGNORECASE)
+        line = f"{line} {config.HELPLINE_LINE}"
+    return line
+
+
+def _closing_line(
     outcome_type: str, details: dict, follow_ups: list, today: date
 ) -> str:
     """The last thing the bot says, built from the recorded outcome. It restates what
@@ -333,6 +455,8 @@ def closing_line(
         )
     if reason == "verification_failed":
         return "I'm sorry, I couldn't verify you, so a colleague will call you back. Goodbye."
+    if reason == "call_dropped":
+        return "Thank you. A colleague will call you back. Goodbye."
     if reason == "call_time_limit":
         return "We're out of time for today, so a colleague will call you back. Thank you, goodbye."
     return f"Thank you. We'll call back {_spoken_time(details.get('time'), today)}. Goodbye."

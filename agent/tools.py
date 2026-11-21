@@ -4,12 +4,19 @@ The model never passes a customer ID: every tool acts on the customer this call
 is for, so the bot cannot be talked into opening someone else's account.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import config
 from agent import mock_bank
-from agent.guardrails import promise_problems
+from agent.guardrails import (
+    callback_problems,
+    future_callback_time,
+    promise_problems,
+    readback_problems,
+)
 from agent.outcome import (
     CALLBACK_REASONS,
     OUTCOME_TYPES,
@@ -36,6 +43,19 @@ class CallState:
     follow_ups: list | None = None
     guarded: bool = False  # v2: code guardrails on (see agent/guardrails.py)
     tools_done: set[str] = field(default_factory=set)  # tools that ran without error
+    # The spoken turns so far, in order: ("bot" or "customer", text).
+    turns: list[tuple[str, str]] = field(default_factory=list)
+    # The call's clock: real time, or the evals' simulated clock (agent.core).
+    clock: Callable[[], datetime] = field(
+        default=lambda: datetime.now(ZoneInfo(config.TIMEZONE))
+    )
+
+    @property
+    def v2_1(self) -> bool:
+        """The fixes made after the final evaluation are on (v2 keeps the evaluated
+        behaviour)."""
+        return self.bot_version == "v2.1"
+
     customer_turns: list[str] = field(
         default_factory=list
     )  # what the customer has said
@@ -127,6 +147,8 @@ def record_outcome(
             mock_bank.get_customer(state.customer_id),
             state.started_at.date(),
         )
+        if state.v2_1:  # the customer's yes must answer a read-back
+            problems += readback_problems(details, state.turns, state.started_at.date())
         if problems:
             return {
                 "recorded": False,
@@ -135,11 +157,34 @@ def record_outcome(
                 + ". Read the date and amount back to the customer, ask them to confirm, "
                 "and record only after they say yes.",
             }
+    if state.guarded and outcome_type == "CALLBACK_REQUEST":
+        # A callback reason must come from the call, not be guessed ("busy").
+        problems = callback_problems(
+            details, state.customer_turns, state.otp_failed_attempts
+        )
+        if problems:
+            return {
+                "recorded": False,
+                "error": "Not recorded: "
+                + "; ".join(problems)
+                + ". Record a callback only with a reason the customer gave. If the call "
+                "ends with nothing agreed, the system records it.",
+            }
+    moved = ""
+    if state.v2_1 and outcome_type == "CALLBACK_REQUEST" and details.get("time"):
+        # A callback time already past moves to the same time the next day.
+        later = future_callback_time(details["time"], state.clock())
+        if later != details["time"]:
+            moved = f"The time {details['time']} had passed, so it is {later}. "
+            details = {**details, "time": later}
     state.outcome_type = outcome_type
     state.outcome_details = details
     state.follow_ups = follow_ups or []
     if state.guarded:  # the closing line is spoken by code, from the outcome
-        return {"recorded": True, "next": "Say nothing more. The call is closing."}
+        return {
+            "recorded": True,
+            "next": moved + "Say nothing more. The call is closing.",
+        }
     return {"recorded": True, "next": "Say a short goodbye. The call ends after it."}
 
 
@@ -157,6 +202,7 @@ TOOLS = {
 TOOLS_BY_VERSION = {
     "v1": ("record_outcome",),
     "v2": ("send_otp", "verify_otp", "get_account_summary", "record_outcome"),
+    "v2.1": ("send_otp", "verify_otp", "get_account_summary", "record_outcome"),
 }
 
 

@@ -3,8 +3,13 @@
 "I'll pay on Friday" reaches the model as "I'll pay on Friday [Friday = Friday,
 20 November 2026 (2026-11-20)]", so it never has to work out which Friday is meant.
 A weekday means the next one (today, if it is that day). "The 20th" means this
-month, or next month if the 20th has passed. "Next Friday" and the Hindi "kal" (both
-yesterday and tomorrow) are left alone: people mean different days by them.
+month, or next month if the 20th has passed. "Next Friday" is left alone: people
+mean different days by it. The Hindi "kal" means both yesterday and tomorrow; v2
+leaves it alone, v2.1 resolves it by the tense of the payment verb with it (see
+KAL_PAST, KAL_FUTURE), and leaves it alone when the tense does not settle it.
+
+mode_notes does the same for how a customer says they paid ("NEFT se", "यूपीआई से"),
+in Latin or Devanagari: "[payment mode: net banking]".
 """
 
 import re
@@ -61,9 +66,56 @@ def _day_of_month(day: int, today: date) -> date | None:
         return None
 
 
-def date_notes(text: str, today: date) -> list[str]:
+KAL = re.compile(r"\bkal\b|कल", re.IGNORECASE)
+# Payment verbs with "kal": past tense means yesterday, future means tomorrow.
+KAL_PAST = re.compile(
+    r"kar diya|kar di\b|kiya tha|kiya\b|bhar diya|bhar di\b|de diya|de di\b|jama kar"
+    r" diya|pay kar diya|ho gaya|कर दिया|कर दी|किया था|किया|भर दिया|भर दी|दे दिया|दे दी"
+    r"|जमा कर दिया|हो गया",
+    re.IGNORECASE,
+)
+KAL_FUTURE = re.compile(
+    r"kar(?:u|oo)ng[aei]|d(?:u|oo)ng[aei]|bhar d(?:u|oo)ng[aei]|jama kar(?:u|oo)ng[aei]"
+    r"|करूं?ँ?गा|करूं?ँ?गी|करूंगा|करूँगा|दूं?ँ?गा|दूं?ँ?गी|दूंगा|दूँगा|भरूंगा|भरूँगा",
+    re.IGNORECASE,
+)
+
+
+def kal_date(text: str, today: date) -> date | None:
+    """The day "kal" means here: yesterday with a past-tense payment verb, tomorrow
+    with a future one, None when there is no "kal" or the tense does not settle it."""
+    if not KAL.search(text):
+        return None
+    past, future = bool(KAL_PAST.search(text)), bool(KAL_FUTURE.search(text))
+    if past == future:  # neither, or both
+        return None
+    return today + timedelta(days=-1 if past else 1)
+
+
+# How a customer says they paid, in Latin or Devanagari script. "credit card" is the
+# card being paid, not the way it was paid, so it is taken out first.
+MODES = {
+    "net banking": r"\bneft\b|\bimps\b|\brtgs\b|net ?banking|internet banking|bank "
+    r"transfer|एनईएफटी|नेफ्ट|आईएमपीएस|आरटीजीएस|नेट बैंकिंग|नेटबैंकिंग",
+    "UPI": r"\bupi\b|\bg ?pay\b|google pay|phone ?pe|\bpaytm\b|\bbhim\b|यूपीआई|यू पी आई"
+    r"|गूगल पे|फोनपे|फ़ोनपे|पेटीएम",
+    "card": r"debit card|\bcard\b|डेबिट कार्ड|कार्ड",
+    "cash": r"\bcash\b|\bnaka?d\b|\bnagad\b|कैश|नकद|नगद",
+}
+
+
+def mode_notes(text: str) -> list[str]:
+    """ "[payment mode: net banking]" when the customer names exactly one way of paying;
+    empty when they name none, or more than one."""
+    low = re.sub(r"credit card|क्रेडिट कार्ड", " ", text.lower())
+    found = [mode for mode, words in MODES.items() if re.search(words, low)]
+    return [f"[payment mode: {found[0]}]"] if len(found) == 1 else []
+
+
+def date_notes(text: str, today: date, resolve_kal: bool = False) -> list[str]:
     """One note per date the customer mentions, e.g. "[Friday = Friday, 20 November
-    2026 (2026-11-20)]". Empty if they mention none."""
+    2026 (2026-11-20)]". Empty if they mention none. resolve_kal (v2.1): also "kal",
+    by tense."""
     low = text.lower()
     found: dict[str, date] = {}
 
@@ -103,5 +155,10 @@ def date_notes(text: str, today: date) -> list[str]:
         match = re.search(words, low)
         if match and not (offset == 1 and "day after tomorrow" in low):
             found[match.group(0)] = today + timedelta(days=offset)
+
+    if resolve_kal:
+        day = kal_date(text, today)
+        if day:
+            found[KAL.search(text).group(0)] = day
 
     return [f"[{said} = {_spoken(day)}]" for said, day in found.items()]

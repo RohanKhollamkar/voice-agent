@@ -60,7 +60,9 @@ async def main(customer_id: str, version: str, echo: str) -> None:
 def parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Voice call with the collections bot.")
     parser.add_argument("--customer", default="C001", choices=list(mock_bank.CUSTOMERS))
-    parser.add_argument("--version", default=config.BOT_VERSION, choices=["v1", "v2"])
+    parser.add_argument(
+        "--version", default=config.BOT_VERSION, choices=list(config.BOT_VERSIONS)
+    )
     parser.add_argument(
         "--echo",
         default="none",

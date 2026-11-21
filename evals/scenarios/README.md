@@ -27,8 +27,8 @@ With no `outcome_type`, any valid outcome passes.
 | `outcome_type`, `outcome_reason`, `outcome_mode` | The recorded outcome's type, and its reason or payment mode |
 | `outcome_amount: full_balance` | The promised amount is the customer's full outstanding balance (also `minimum_due`, or a number of rupees such as `1000`) |
 | `outcome_date: today` | The outcome's date is today, tomorrow, yesterday, or the next date of a weekday (`friday`) |
-| `outcome_day_of_month: 20` | The promised date is that day of the month the call is made in |
-| `outcome_time: "18:00"` | The callback time is that time on the day of the call |
+| `outcome_day_of_month: 20` | The promised date is the next 20th from the call date |
+| `outcome_time: "18:00"` | The callback time is that time on the day of the call, or the next day if the call started after it |
 | `follow_ups` | The outcome's `follow_ups` list has each entry, with its reason |
 | `bot_must_say` | Each text (such as `3.5%`) appears in something the bot says |
 | `no_late_fee: true` | Asked about the late fee, the bot says there is none |

@@ -25,6 +25,10 @@ SARVAM_API_KEY: str = _get_str("SARVAM_API_KEY")
 ELEVENLABS_API_KEY: str = _get_str("ELEVENLABS_API_KEY")
 NVIDIA_API_KEY: str = _get_str("NVIDIA_API_KEY")
 WEBHOOK_URL: str = _get_str("WEBHOOK_URL")
+# The webhook is tried twice. Before the retry: the server's Retry-After, capped at
+# WEBHOOK_RETRY_MAX_WAIT, or else WEBHOOK_RETRY_WAIT seconds.
+WEBHOOK_RETRY_WAIT: float = 1.0
+WEBHOOK_RETRY_MAX_WAIT: float = 5.0
 
 # Models (NVIDIA API IDs)
 BOT_MODEL: str = _get_str("BOT_MODEL", "nvidia/nemotron-3.5-super-vl-120b-a12b")
@@ -198,7 +202,17 @@ TIMEZONE: str = "Asia/Kolkata"
 
 # Behaviour
 ENFORCE_OTP: bool = _get_bool("ENFORCE_OTP", True)
-BOT_VERSION: str = _get_str("BOT_VERSION", "v2")
+# v1: the bank's prompt. v2: the evaluated bot (docs/results/final). v2.1: v2 plus the
+# fixes from the live voice retest; v2 is kept unchanged so its results stay reproducible.
+BOT_VERSIONS: tuple[str, ...] = ("v1", "v2", "v2.1")
+BOT_VERSION: str = _get_str("BOT_VERSION", "v2.1")
+# The brief's exact line for questions about other products (spoken by code in v2.1).
+OTHER_PRODUCTS_LINE: str = (
+    "I'm only here for your pending payment. "
+    "For other queries, please visit a branch or call the helpline."
+)
+# v2.1: the last sentence of every closing line (not of a transfer to a colleague).
+HELPLINE_LINE: str = "For any other queries, please call the Mumbai Bank helpline."
 # sarvam (default) | elevenlabs. Sarvam is the default because the ElevenLabs free
 # quota ran out during testing; set elevenlabs to switch back.
 TTS_PROVIDER: str = _get_str("TTS_PROVIDER", "sarvam").lower()

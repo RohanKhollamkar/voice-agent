@@ -24,6 +24,7 @@ from pipecat.frames.frames import (
     BotStartedSpeakingFrame,
     BotStoppedSpeakingFrame,
     CancelFrame,
+    ClientConnectedFrame,
     EndFrame,
     Frame,
     InputAudioRawFrame,
@@ -36,7 +37,10 @@ from pipecat.frames.frames import (
     StartFrame,
     TranscriptionFrame,
     TTSSpeakFrame,
+    VADUserStartedSpeakingFrame,
+    VADUserStoppedSpeakingFrame,
 )
+from pipecat.observers.base_observer import BaseObserver, FramePushed
 from pipecat.observers.user_bot_latency_observer import (
     LatencyBreakdown,
     UserBotLatencyObserver,
@@ -241,6 +245,8 @@ class AgentStep(FrameProcessor):
                     logger.warning(
                         "Closing line not confirmed as spoken; ending the call anyway"
                     )
+                # The bot ends the call: the demo console disconnects the browser on this.
+                self.agent._log(type="call_ended", by="bot", name=config.BOT_NAME)
                 if self.end_call:
                     await self.end_call()
                 return
@@ -254,6 +260,97 @@ class NormaliserStep(FrameProcessor):
         if isinstance(frame, LLMTextFrame) and frame.text.strip():
             frame = LLMTextFrame(text=speakable(frame.text) + " ")
         await self.push_frame(frame, direction)
+
+
+class TurnLatencyObserver(UserBotLatencyObserver):
+    """Pipecat's per-stage latency breakdown, kept anchored to the customer's stop.
+
+    Pipecat clears that anchor on every interruption. Our turns start from the
+    transcript (minimum-words barge-in), after the customer has stopped, and starting
+    a turn sends an interruption: the anchor was lost and the breakdown fell back to
+    the call connecting. That one interruption is skipped here. A real barge-in still
+    resets the breakdown: the customer starting to speak clears the stop moment first.
+    (Relies on Pipecat's private _user_stopped_time, as of pipecat-ai 1.16.)
+    """
+
+    async def on_push_frame(self, data: FramePushed):
+        if (
+            isinstance(data.frame, InterruptionFrame)
+            and self._user_stopped_time is not None
+        ):
+            return  # the turn starting after the customer stopped: keep the anchor
+        await super().on_push_frame(data)
+
+
+class FirstAudioObserver(BaseObserver):
+    """Time to the bot's first audio, per bot turn, logged as voice_first_audio.
+
+    The opening line is measured from the moment the call connected (the browser
+    connecting, or the pipeline starting when there is no browser). Every reply is
+    measured from the moment the customer stopped speaking (the local voice detector's
+    stop, minus its silence wait) to the bot's first audio, which may be the "One
+    moment." holding line. If that stop moment is missing for a reply, nothing is
+    measured and voice_first_audio_missing is logged instead of a wrong number.
+
+    Pipecat's UserBotLatencyObserver loses that moment here: it clears it on the
+    interruption sent when a customer turn starts, and our turns start from the
+    transcript (minimum-words barge-in), after the customer has stopped. Its
+    breakdown then counts from the connection instead.
+    """
+
+    def __init__(self, agent: Agent):
+        super().__init__()
+        self.agent = agent
+        self._seen: set[int] = set()  # a frame is pushed past every processor
+        self._connected_at: float | None = None
+        self._stopped_at: float | None = None
+        self._turns_started = 0  # LLM responses begun: the opening, then replies
+        self._turns_measured = 0
+
+    async def on_push_frame(self, data: FramePushed):
+        frame = data.frame
+        if frame.id in self._seen or not isinstance(
+            frame,
+            (
+                StartFrame,
+                ClientConnectedFrame,
+                VADUserStartedSpeakingFrame,
+                VADUserStoppedSpeakingFrame,
+                LLMFullResponseStartFrame,
+                BotStartedSpeakingFrame,
+            ),
+        ):
+            return
+        self._seen.add(frame.id)
+        now = time.monotonic()
+        if isinstance(frame, StartFrame) and self._connected_at is None:
+            self._connected_at = now
+        elif isinstance(frame, ClientConnectedFrame):
+            self._connected_at = now  # the browser is there: the opening's start
+        elif isinstance(frame, VADUserStartedSpeakingFrame):
+            self._stopped_at = None
+        elif isinstance(frame, VADUserStoppedSpeakingFrame):
+            self._stopped_at = now - frame.stop_secs
+        elif isinstance(frame, LLMFullResponseStartFrame):
+            self._turns_started += 1
+        elif self._turns_measured < self._turns_started:  # BotStartedSpeakingFrame
+            self._turns_measured = self._turns_started
+            if self._turns_started == 1:
+                start, measured_from = self._connected_at, "call_connected"
+            else:
+                start, measured_from = self._stopped_at, "customer_stopped"
+            if start is None:
+                self.agent._log(
+                    type="voice_first_audio_missing", turn=self._turns_started
+                )
+                logger.warning("No customer-stopped moment for this turn: no latency")
+            else:
+                self.agent._log(
+                    type="voice_first_audio",
+                    seconds=round(now - start, 3),
+                    measured_from=measured_from,
+                )
+            self._stopped_at = None
 
 
 def save_recording(path, audio: bytes, sample_rate: int, num_channels: int) -> None:
@@ -463,13 +560,14 @@ async def run_call(
     async def on_audio_data(_, audio: bytes, sample_rate: int, num_channels: int):
         save_recording(recording_path, audio, sample_rate, num_channels)
 
-    latency = UserBotLatencyObserver()
+    latency = TurnLatencyObserver()
 
     @latency.event_handler("on_latency_breakdown")
     async def on_latency_breakdown(_, breakdown: LatencyBreakdown):
-        # Per turn: time from the end of the customer's speech to the bot's first audio,
-        # by stage. The agent's own time (model calls and tools) is the part the
-        # observer cannot name, between the response starting and the first text.
+        # Pipecat's breakdown by stage, from the customer's stop (user_silence) to the
+        # bot's first audio; the opening line is measured from the call connecting.
+        # TurnLatencyObserver keeps the anchor; voice_test checks it agrees with
+        # voice_first_audio.
         parts: dict[str, float] = {}
         for part in breakdown.contributions:
             parts[part.label] = round(parts.get(part.label, 0) + part.duration_secs, 3)
@@ -485,7 +583,7 @@ async def run_call(
     worker = PipelineWorker(
         pipeline,
         params=PipelineParams(enable_metrics=True),
-        observers=[latency],
+        observers=[latency, FirstAudioObserver(agent)],
     )
     agent_step.end_call = worker.stop_when_done
 

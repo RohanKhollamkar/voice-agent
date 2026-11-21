@@ -31,6 +31,7 @@ The reviewers will read the code and ask us to walk through it. Prefer small, re
 - Two failed OTP attempts end the call: no account details, outcome `CALLBACK_REQUEST` with reason `verification_failed`.
 - If someone other than the customer answers, the bot says nothing about the debt or dues and asks for a good time to call back: `CALLBACK_REQUEST` with reason `wrong_party`.
 - If the customer asks for a waiver and also promises to pay, the outcome is `PROMISE_TO_PAY` and the waiver goes in `follow_ups` as a `CALLBACK_REQUEST` with reason `waiver_request`.
+- If the call ends (hang-up, silence, End call) with nothing agreed and no reason given by the customer, code records CALLBACK_REQUEST with reason call_dropped and time null. A reason such as busy or verification_failed is only recorded when the transcript supports it.
 - The test scenarios are listed in `docs/scenarios.csv` (S01–S19).
 
 ## Locked stack

@@ -26,7 +26,12 @@ class ReplyCheckStep(FrameProcessor):
         guarded = self.agent.state.guarded and not self.agent.ended
         if guarded and isinstance(frame, LLMTextFrame) and frame.text.strip():
             verified = self.agent.state.otp_verified or not config.ENFORCE_OTP
-            text, blocks = check_reply(frame.text, self.agent.allowed_numbers, verified)
+            text, blocks = check_reply(
+                frame.text,
+                self.agent.allowed_numbers,
+                verified,
+                tool_names=self.agent.state.v2_1,
+            )
             for block in blocks:
                 logger.warning(f"Reply check blocked: {block}")
                 self.agent._log(type="guardrail_block", step="voice", **block)
