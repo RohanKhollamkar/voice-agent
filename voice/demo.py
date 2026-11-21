@@ -32,6 +32,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
+import config
 from agent import mock_bank
 from agent.core import Agent
 from voice.export import export_call, export_file
@@ -64,7 +65,7 @@ app = FastAPI(title="Mumbai Bank demo console")
 
 class StartRequest(BaseModel):
     customer_id: str
-    version: str = "v2"
+    version: str = config.BOT_VERSION
     mode: str = "text"
 
 
@@ -111,15 +112,20 @@ async def customers() -> list[dict]:
 @app.post("/api/calls")
 async def start_call(request: StartRequest) -> dict:
     mock_bank.get_customer(request.customer_id)  # unknown ids fail here
-    if request.version not in ("v1", "v2") or request.mode not in ("voice", "text"):
-        raise HTTPException(400, "version is v1 or v2; mode is voice or text")
+    if request.version not in config.BOT_VERSIONS or request.mode not in (
+        "voice",
+        "text",
+    ):
+        raise HTTPException(
+            400, f"version is one of {config.BOT_VERSIONS}; mode is voice or text"
+        )
     # Voice runs on real time; text mode, like the evals, estimates time from words.
     clock = "wall" if request.mode == "voice" else "spoken"
     agent = Agent(request.customer_id, request.version, clock=clock)
     call = Call(agent=agent, mode=request.mode)
     agent.listeners.append(call.publish)
     calls[agent.state.call_id] = call
-    return {"call_id": agent.state.call_id}
+    return {"call_id": agent.state.call_id, "bot_name": config.BOT_NAME}
 
 
 @app.get("/api/calls/{call_id}/events")
@@ -226,6 +232,14 @@ def add_voice_routes() -> None:
             )
             call.connection = connection
             state = call.agent.state
+
+            def on_event(event: dict) -> None:
+                # The bot ended the call: hang up the browser connection too, so the
+                # page does not stay "connected" while the pipeline winds down.
+                if event["type"] == "call_ended":
+                    asyncio.get_running_loop().create_task(connection.disconnect())
+
+            call.agent.listeners.append(on_event)
 
             async def run() -> None:
                 try:  # run_call settles the outcome itself, however the call ends

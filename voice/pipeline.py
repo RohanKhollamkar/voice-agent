@@ -245,6 +245,8 @@ class AgentStep(FrameProcessor):
                     logger.warning(
                         "Closing line not confirmed as spoken; ending the call anyway"
                     )
+                # The bot ends the call: the demo console disconnects the browser on this.
+                self.agent._log(type="call_ended", by="bot", name=config.BOT_NAME)
                 if self.end_call:
                     await self.end_call()
                 return
@@ -258,6 +260,26 @@ class NormaliserStep(FrameProcessor):
         if isinstance(frame, LLMTextFrame) and frame.text.strip():
             frame = LLMTextFrame(text=speakable(frame.text) + " ")
         await self.push_frame(frame, direction)
+
+
+class TurnLatencyObserver(UserBotLatencyObserver):
+    """Pipecat's per-stage latency breakdown, kept anchored to the customer's stop.
+
+    Pipecat clears that anchor on every interruption. Our turns start from the
+    transcript (minimum-words barge-in), after the customer has stopped, and starting
+    a turn sends an interruption: the anchor was lost and the breakdown fell back to
+    the call connecting. That one interruption is skipped here. A real barge-in still
+    resets the breakdown: the customer starting to speak clears the stop moment first.
+    (Relies on Pipecat's private _user_stopped_time, as of pipecat-ai 1.16.)
+    """
+
+    async def on_push_frame(self, data: FramePushed):
+        if (
+            isinstance(data.frame, InterruptionFrame)
+            and self._user_stopped_time is not None
+        ):
+            return  # the turn starting after the customer stopped: keep the anchor
+        await super().on_push_frame(data)
 
 
 class FirstAudioObserver(BaseObserver):
@@ -538,13 +560,14 @@ async def run_call(
     async def on_audio_data(_, audio: bytes, sample_rate: int, num_channels: int):
         save_recording(recording_path, audio, sample_rate, num_channels)
 
-    latency = UserBotLatencyObserver()
+    latency = TurnLatencyObserver()
 
     @latency.event_handler("on_latency_breakdown")
     async def on_latency_breakdown(_, breakdown: LatencyBreakdown):
-        # Pipecat's breakdown by stage. Only trustworthy when measured_from is
-        # user_silence; see FirstAudioObserver for why it often is not, and for the
-        # time to first audio that the demo page and voice_test use.
+        # Pipecat's breakdown by stage, from the customer's stop (user_silence) to the
+        # bot's first audio; the opening line is measured from the call connecting.
+        # TurnLatencyObserver keeps the anchor; voice_test checks it agrees with
+        # voice_first_audio.
         parts: dict[str, float] = {}
         for part in breakdown.contributions:
             parts[part.label] = round(parts.get(part.label, 0) + part.duration_secs, 3)

@@ -300,6 +300,12 @@ def latency_rows(transcript: dict) -> list[dict]:
         for e in transcript["events"]
         if e["type"] == "voice_first_audio" and e["measured_from"] == "customer_stopped"
     ]
+    # Pipecat's per-stage breakdown of the same interval, for each reply.
+    stages = [
+        e["total_seconds"]
+        for e in transcript["events"]
+        if e["type"] == "voice_latency" and e["measured_from"] == "user_silence"
+    ]
     agent_times, acks, turn = [], [], -1
     for event in transcript["events"]:
         if event["type"] == "customer":
@@ -320,6 +326,7 @@ def latency_rows(transcript: dict) -> list[dict]:
         rows.append(
             {
                 "label": labels[index] if index < len(labels) else None,
+                "stages": stages[index] if index < len(stages) else None,
                 "real gap": round(reply - ended, 2) if reply else None,
                 "agent": agent_times[index] if index < len(agent_times) else None,
                 "ack": acks[index] if index < len(acks) else 0,
@@ -329,33 +336,40 @@ def latency_rows(transcript: dict) -> list[dict]:
 
 
 def print_latency(rows: list[dict]) -> bool:
-    """Print the table and check it. Returns False if any turn has no label, or a label
-    more than LABEL_TOLERANCE_SECONDS away from the real gap."""
+    """Print the table and check it. Returns False if any turn has no label, a label
+    more than LABEL_TOLERANCE_SECONDS away from the real gap, or a stage breakdown
+    (Pipecat's) more than that away from the label."""
+    tolerance = LABEL_TOLERANCE_SECONDS
     print("\nTime to the bot's first audio per customer line, seconds")
     print(
-        f"  {'turn':>4}  {'label':>6}  {'real gap':>8}  {'agent':>6}  {'ack':>3}  check"
+        f"  {'turn':>4}  {'label':>6}  {'stages':>6}  {'real gap':>8}  {'agent':>6}  ack  check"
     )
     ok = True
     for number, row in enumerate(rows, start=1):
-        label, real = row["label"], row["real gap"]
+        label, stages, real = row["label"], row["stages"], row["real gap"]
         if real is None:
             verdict = "no reply heard"
         elif label is None:
             verdict, ok = "FAIL: no label", False
-        elif abs(label - real) > LABEL_TOLERANCE_SECONDS:
-            verdict, ok = f"FAIL: off by {abs(label - real):.2f}", False
+        elif abs(label - real) > tolerance:
+            verdict, ok = f"FAIL: label off by {abs(label - real):.2f}", False
+        elif stages is None:
+            verdict, ok = "FAIL: no stage breakdown", False
+        elif abs(stages - label) > tolerance:
+            verdict, ok = f"FAIL: stages off by {abs(stages - label):.2f}", False
         else:
             verdict = "ok"
         cells = [
             f"{v:>6.2f}" if isinstance(v, float) else f"{'-' if v is None else v:>6}"
-            for v in (label, real, row["agent"])
+            for v in (label, stages, real, row["agent"])
         ]
         print(
-            f"  {number:>4}  {cells[0]}  {cells[1]:>8}  {cells[2]}  {row['ack']:>3}  {verdict}"
+            f"  {number:>4}  {cells[0]}  {cells[1]}  {cells[2]:>8}  {cells[3]}"
+            f"  {row['ack']:>3}  {verdict}"
         )
     print(
-        f"  Label check (each label within {LABEL_TOLERANCE_SECONDS:g} s of the real gap): "
-        + ("passed" if ok else "FAILED")
+        f"  Check (label within {tolerance:g} s of the real gap, stages within "
+        f"{tolerance:g} s of the label): " + ("passed" if ok else "FAILED")
     )
     return ok
 
@@ -421,7 +435,9 @@ if __name__ == "__main__":
         description="A voice call with a scripted customer."
     )
     parser.add_argument("--customer", default="C001", choices=list(mock_bank.CUSTOMERS))
-    parser.add_argument("--version", default="v2", choices=["v1", "v2"])
+    parser.add_argument(
+        "--version", default=config.BOT_VERSION, choices=list(config.BOT_VERSIONS)
+    )
     parser.add_argument(
         "--barge-in", action="store_true", help="speak the third line over the bot"
     )

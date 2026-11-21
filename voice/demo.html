@@ -83,6 +83,8 @@
   .meta { font-size: 11px; color: var(--muted); margin: 3px 4px 0; display: flex; gap: 6px; flex-wrap: wrap; }
   .chip { font: 11px var(--mono); padding: 0 6px; border-radius: 9px; background: var(--accent-soft); color: var(--accent); }
   .chip.slow { background: var(--warn-soft); color: var(--warn); }
+  .ack { color: var(--muted); font-size: 12px; font-style: italic; margin: -4px 0 10px 4px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .ack .meta-inline { font-style: normal; display: inline-flex; gap: 6px; align-items: center; }
   .notice { text-align: center; color: var(--muted); font-size: 12px; margin: 6px 0 12px; }
   .composer { display: flex; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--line); }
   .composer input { flex: 1; }
@@ -136,7 +138,7 @@
   <h1>Mumbai Bank <span>· collections demo console</span></h1>
   <label class="field">Customer <select id="customer"></select></label>
   <label class="field">Bot
-    <span class="segmented" id="version"><button data-v="v1">v1</button><button data-v="v2" class="on">v2</button></span>
+    <span class="segmented" id="version"><button data-v="v1">v1</button><button data-v="v2">v2</button><button data-v="v2.1" class="on">v2.1</button></span>
   </label>
   <label class="field">Mode
     <span class="segmented" id="mode"><button data-v="voice">Voice</button><button data-v="text" class="on">Text</button></span>
@@ -183,7 +185,7 @@
 // The page only starts and ends calls and shows the events the agent logs.
 const $ = (id) => document.getElementById(id);
 const LIMIT = 180, WARN = 150, BAR_MAX = 210;   // seconds; the bar runs to 3:30
-let call = null;   // {id, mode, stream, pc, started, over, lastBot}
+let call = null;   // {id, mode, stream, pc, started, over, turn: {first, pending}}
 
 // ---------- Controls ----------
 function segmented(id) {
@@ -214,8 +216,9 @@ $("composer").addEventListener("submit", (e) => { e.preventDefault(); sendTurn()
 async function startCall() {
   reset();
   const body = { customer_id: $("customer").value, version: version(), mode: mode() };
-  const { call_id } = await post("/api/calls", body);
-  call = { id: call_id, mode: body.mode, started: Date.now(), over: false, lastBot: null };
+  const { call_id, bot_name } = await post("/api/calls", body);
+  call = { id: call_id, mode: body.mode, started: Date.now(), over: false, botName: bot_name,
+           turn: { first: null, pending: null } };
   setControls(true);
   status(`<b>${body.customer_id}</b> · ${body.version} · ${body.mode} · call ${call_id.slice(0, 8)}`);
   $("clock-note").textContent = body.mode === "text"
@@ -291,12 +294,14 @@ function onEvent(e) {
   switch (e.type) {
     case "customer": return addTurn("customer", e.text, e);
     case "bot": return addTurn("bot", e.text, e);
+    case "voice_ack": return addAck(e);
     case "voice_first_audio": return addVoiceLatency(e);
     case "voice_latency": return;  // Pipecat's stage breakdown: not used for the label
     case "outcome": return showOutcome(e);
     case "webhook": return showWebhook(e);
     case "export": return showExport(e);
     case "call_over": return callOver();
+    case "call_ended": return endedByBot(e);
     case "llm_call": case "call_connected": case "recording": case "voice_agent_time": return;  // not shown
     default: return addEvent(e);
   }
@@ -310,22 +315,51 @@ function addTurn(who, text, e) {
   meta.append(el("span", "", `${who === "bot" ? "Bot" : "Customer"} · ${fmt(e.at_seconds)}`));
   if (who === "bot") {
     if (e.latency_ms != null) meta.append(chip(`agent ${(e.latency_ms / 1000).toFixed(1)} s`, e.latency_ms > 2500));
-    if (e.closing) meta.append(el("span", "", "closing line"));
-    call && (call.lastBot = meta);
+    if (e.closing) { meta.append(el("span", "", "closing line")); if (call) call.botClosed = true; }
+  } else if (call) {
+    call.turn = { first: null, pending: null };  // a new customer turn
   }
   turn.append(meta);
   box.append(turn);
+  if (who === "bot") heard(meta);
   scrollDown(box);
 }
 
+function addAck(e) {
+  // The holding line ("One moment."): a small grey line, often the first thing heard.
+  const box = clearEmpty("conversation");
+  const line = el("div", "ack");
+  line.append(el("span", "", `${e.text}`));
+  const meta = el("span", "meta-inline", `holding line · ${fmt(e.at_seconds)}`);
+  line.append(meta);
+  box.append(line);
+  heard(meta);
+  scrollDown(box);
+}
+
+function heard(meta) {
+  // The first thing the customer heard in this turn carries the turn's latency label.
+  if (!call || call.turn.first) return;
+  call.turn.first = meta;
+  if (call.turn.pending) { attachLabel(meta, call.turn.pending); call.turn.pending = null; }
+}
+
 function addVoiceLatency(e) {
-  // Voice: the customer stopping to the bot's first audio (a holding line counts), on
-  // the latest bot turn; for the opening line, the call connecting to its first audio.
-  // A turn with no stop moment gets no label (voice_first_audio_missing, shown on the right).
-  if (!call || !call.lastBot || call.lastBot.dataset.voice) return addEvent(e);
-  call.lastBot.dataset.voice = "1";
+  // Voice: the customer stopping to the bot's first audio, on whatever they heard first
+  // in the turn (the holding line, or the first bot line); for the opening line, the
+  // call connecting to its first audio. The audio often starts before the reply's text
+  // is shown, so the label waits for it. A turn with no stop moment gets no label
+  // (voice_first_audio_missing, shown on the right).
+  if (!call) return;
+  if (call.turn.first) attachLabel(call.turn.first, e);
+  else call.turn.pending = e;
+}
+
+function attachLabel(meta, e) {
+  if (meta.dataset.voice) return;
+  meta.dataset.voice = "1";
   const from = e.measured_from === "call_connected" ? " (from connect)" : "";
-  call.lastBot.prepend(chip(`${e.seconds.toFixed(1)} s to first audio${from}`, e.seconds > 3.5));
+  meta.prepend(chip(`${e.seconds.toFixed(1)} s to first audio${from}`, e.seconds > 3.5));
 }
 
 const GUARD = {
@@ -417,17 +451,37 @@ function showExport(e) {
   box.append(files);
 }
 
+function hangUp() {
+  // Close the browser connection and release the microphone.
+  if (!call) return;
+  if (call.pc) { call.pc.close(); call.pc = null; }
+  if (call.mic) { call.mic.getTracks().forEach((t) => t.stop()); call.mic = null; }
+  $("bot-audio").srcObject = null;
+  $("composer").hidden = true;
+  $("voice-hint").hidden = true;
+}
+
+function endedNotice(text) {
+  if (!call || call.endedShown) return;
+  call.endedShown = true;
+  $("conversation").append(el("div", "notice", text)); scrollDown($("conversation"));
+}
+
+function endedByBot(e) {
+  // Voice: the bot's closing line has played and it ended the call.
+  hangUp();
+  endedNotice(`Call ended by ${e.name}`);
+  status(status() + " · ending…");
+}
+
 function callOver() {
   if (!call) return;
   call.over = true;
   call.stream.close();
   clearInterval(call.tick);
-  if (call.pc) call.pc.close();
-  if (call.mic) call.mic.getTracks().forEach((t) => t.stop());
-  $("composer").hidden = true;
-  $("voice-hint").hidden = true;
-  const n = el("div", "notice", "Call ended");
-  $("conversation").append(n); scrollDown($("conversation"));
+  hangUp();
+  // Text mode has no call_ended event: the bot ended it if its last line was the closing.
+  endedNotice(call.botClosed ? `Call ended by ${call.botName || "the bot"}` : "Call ended");
   status(status().replace(" · ending…", "") + " · ended");
   call = null;
   setControls(false);
