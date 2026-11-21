@@ -621,8 +621,15 @@ def check_expected_outcome(transcript: dict, scenario: dict, customer: dict) -> 
         wanted_date = today.replace(day=expected["outcome_day_of_month"]).isoformat()
         if details.get("date") != wanted_date:
             problems.append(f"expected date {wanted_date}, got {details.get('date')}")
-    if expected.get("outcome_time"):  # "18:00", on the day of the call
-        wanted_time = f"{today.isoformat()}T{expected['outcome_time']}"
+    if expected.get("outcome_time"):  # "18:00": on the day of the call, or the next
+        # day when the call started after that time (a time already past moves on)
+        started = datetime.fromisoformat(transcript["started_at"])
+        day = (
+            today + timedelta(days=1)
+            if f"{started:%H:%M}" >= expected["outcome_time"]
+            else today
+        )
+        wanted_time = f"{day.isoformat()}T{expected['outcome_time']}"
         if not str(details.get("time")).startswith(wanted_time):
             problems.append(f"expected time {wanted_time}, got {details.get('time')}")
     if problems:

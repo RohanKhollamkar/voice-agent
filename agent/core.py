@@ -23,17 +23,20 @@ from openai import AsyncOpenAI, OpenAIError
 
 import config
 from agent import mock_bank
-from agent.dates import date_notes
+from agent.dates import date_notes, mode_notes
 from agent.guardrails import (
     GOODBYE,
+    PRODUCT_ASK,
     callback_problems,
     check_reply,
     closing_line,
     config_numbers,
+    future_callback_time,
     numbers_in,
     promise_problems,
     spoken_seconds,
     transfer_trigger,
+    without_product_talk,
 )
 from agent.outcome import (
     build_outcome,
@@ -260,6 +263,7 @@ class Agent:
         self.clock = clock
         self.time_note_sent = False
         self._nudged: set[str] = set()  # the outcome nudges already given
+        self._product_turn = False  # v2.1: this turn asked about other products
         # Numbers the bot may say (v2 reply check): config, then tool results and the
         # customer's own words as the call goes on.
         self.allowed_numbers = config_numbers()
@@ -315,6 +319,10 @@ class Agent:
 
     async def _reply_to(self, text: str, speaker: str) -> str:
         turn_start = len(self.events)  # the events of this turn come after this one
+        # v2.1: a question about other products gets the brief's line, spoken by code.
+        self._product_turn = bool(
+            self.state.v2_1 and speaker == "customer" and PRODUCT_ASK.search(text)
+        )
         self._log(type=speaker, text=text)
         started = time.perf_counter()
         content = text
@@ -325,10 +333,17 @@ class Agent:
                 if self._forced_transfer(text):
                     return self._say([self._closing()], started, [], closing=True)
                 # Dates the customer mentions, resolved in code: "[Friday = ...]".
-                notes = date_notes(text, self.state.started_at.date())
+                # v2.1 also resolves "kal" by tense and names the payment mode.
+                notes = date_notes(
+                    text, self.state.started_at.date(), resolve_kal=self.state.v2_1
+                )
+                modes = mode_notes(text) if self.state.v2_1 else []
+                if notes or modes:
+                    content = f"{text} {' '.join(notes + modes)}"
                 if notes:
-                    content = f"{text} {' '.join(notes)}"
                     self._log(type="date_note", notes=notes)
+                if modes:
+                    self._log(type="mode_note", notes=modes)
                 late = self.elapsed_seconds() >= config.CALL_CLOSE_WARNING_SECONDS
                 if late and not self.time_note_sent:
                     self.time_note_sent = True
@@ -425,7 +440,30 @@ class Agent:
             self.messages[index]["content"] = reply  # the history holds what was said
             if reply:
                 utterances.append(reply)
+        if self._product_turn:
+            utterances = self._other_products_line(pieces, utterances)
         return utterances or [FALLBACK_LINE]
+
+    def _other_products_line(
+        self, pieces: list[tuple[str, int]], utterances: list[str]
+    ) -> list[str]:
+        """v2.1: the customer asked about another product. The brief's exact line is
+        said first, by code; the model's own sentences about products (or its rewording
+        of the line) are dropped, and what it said about the payment is kept."""
+        kept = [u for u in (without_product_talk(u) for u in utterances) if u]
+        for piece, index in pieces:
+            if self.messages[index]["content"]:
+                self.messages[index]["content"] = without_product_talk(
+                    self.messages[index]["content"]
+                )
+        first = next((index for _, index in pieces), None)
+        if first is not None:  # the history holds what was said
+            rest = self.messages[first]["content"]
+            self.messages[first]["content"] = (
+                f"{config.OTHER_PRODUCTS_LINE} {rest}".strip()
+            )
+        self._log(type="other_products_line", text=config.OTHER_PRODUCTS_LINE)
+        return [config.OTHER_PRODUCTS_LINE, *kept]
 
     async def _nudge(
         self, reason: str, pieces: list[tuple[str, int]], models_used: list[str]
@@ -529,6 +567,7 @@ class Agent:
             self.state.outcome_details,
             self.state.follow_ups or [],
             self.state.started_at.date(),
+            helpline=self.state.v2_1,
         )
 
     def _say(
@@ -710,6 +749,11 @@ class Agent:
                 details, self.state.customer_turns, self.state.otp_failed_attempts
             )
         if not problems:
+            if self.state.v2_1 and outcome_type == "CALLBACK_REQUEST":
+                details = {
+                    **details,
+                    "time": future_callback_time(details.get("time"), now()),
+                }
             return outcome_type, details, follow_ups
         self._log(type="extraction_rejected", details=details, problems=problems)
         reason = (

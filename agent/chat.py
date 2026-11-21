@@ -50,6 +50,8 @@ async def main(customer_id: str, version: str) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Typed call with the collections bot.")
     parser.add_argument("--customer", default="C001", choices=list(mock_bank.CUSTOMERS))
-    parser.add_argument("--version", default=config.BOT_VERSION, choices=["v1", "v2"])
+    parser.add_argument(
+        "--version", default=config.BOT_VERSION, choices=list(config.BOT_VERSIONS)
+    )
     args = parser.parse_args()
     asyncio.run(main(args.customer, args.version))

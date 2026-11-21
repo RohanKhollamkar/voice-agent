@@ -585,7 +585,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Run the eval scenarios against one bot."
     )
-    parser.add_argument("--version", required=True, choices=["v1", "v2"])
+    parser.add_argument("--version", required=True, choices=list(config.BOT_VERSIONS))
     parser.add_argument("--scenario", nargs="+", help="run only these scenario ids")
     parser.add_argument(
         "--priority",

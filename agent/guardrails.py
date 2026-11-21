@@ -309,15 +309,62 @@ def _spoken_time(iso: str | None, today: date) -> str:
         return "later"
     moment = datetime.fromisoformat(iso)
     clock = f"{moment:%I:%M %p}".lstrip("0").replace(":00", "").lower()
-    day = (
-        "today"
-        if moment.date() == today
-        else f"on {moment:%A}, {moment.day} {moment:%B}"
-    )
-    return f"{day} at {clock}"
+    near = {0: "today", 1: "tomorrow"}.get((moment.date() - today).days)
+    return f"{near or f'on {moment:%A}, {moment.day} {moment:%B}'} at {clock}"
+
+
+def future_callback_time(iso: str | None, now: datetime) -> str | None:
+    """v2.1: a callback time already past ("after 6 pm", said at 7:06 pm) moves to the
+    same time the next day. A time with no zone is taken as the bank's time zone."""
+    if not iso:
+        return iso
+    moment = datetime.fromisoformat(iso)
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=now.tzinfo)
+    while moment <= now:
+        moment += timedelta(days=1)
+    return moment.isoformat()
+
+
+# v2.1: the customer asking about another product. The bot's answer is then the brief's
+# exact line, spoken by code, and the model's own sentences about products are dropped.
+PRODUCT_ASK = re.compile(
+    r"\b(?:fds?|fixed deposits?|loans?|insurance|mutual funds?|investments?|savings "
+    r"account|personal loan|home loan|car loan|bima|karz|karza)\b|एफडी|लोन|बीमा|ऋण",
+    re.IGNORECASE,
+)
+PRODUCT_TALK = re.compile(
+    r"\b(?:fds?|fixed deposits?|loans?|insurance|mutual funds?|investments?|savings "
+    r"account|branch|helpline)\b|only here for your pending payment",
+    re.IGNORECASE,
+)
+
+
+def without_product_talk(text: str) -> str:
+    """The reply with every sentence about other products (or the model's own version
+    of the brief's line) taken out."""
+    sentences = re.split(r"(?<=[.!?])\s+", text.strip())
+    return " ".join(s for s in sentences if s and not PRODUCT_TALK.search(s))
 
 
 def closing_line(
+    outcome_type: str,
+    details: dict,
+    follow_ups: list,
+    today: date,
+    helpline: bool = False,
+) -> str:
+    """The last thing the bot says, built from the recorded outcome. helpline (v2.1):
+    end with config.HELPLINE_LINE instead of "Goodbye" (not on a transfer, where a
+    colleague takes over the call)."""
+    line = _closing_line(outcome_type, details, follow_ups, today)
+    if helpline and outcome_type != "TRANSFER_TO_HUMAN":
+        line = re.sub(r"\s*(?:Thank you, )?goodbye\.$", "", line, flags=re.IGNORECASE)
+        line = f"{line} {config.HELPLINE_LINE}"
+    return line
+
+
+def _closing_line(
     outcome_type: str, details: dict, follow_ups: list, today: date
 ) -> str:
     """The last thing the bot says, built from the recorded outcome. It restates what
