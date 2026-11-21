@@ -10,7 +10,12 @@ from zoneinfo import ZoneInfo
 
 import config
 from agent import mock_bank
-from agent.guardrails import callback_problems, future_callback_time, promise_problems
+from agent.guardrails import (
+    callback_problems,
+    future_callback_time,
+    promise_problems,
+    readback_problems,
+)
 from agent.outcome import (
     CALLBACK_REASONS,
     OUTCOME_TYPES,
@@ -37,6 +42,7 @@ class CallState:
     follow_ups: list | None = None
     guarded: bool = False  # v2: code guardrails on (see agent/guardrails.py)
     tools_done: set[str] = field(default_factory=set)  # tools that ran without error
+    last_bot_reply: str = ""  # what the bot said in its last turn
 
     @property
     def v2_1(self) -> bool:
@@ -135,6 +141,10 @@ def record_outcome(
             mock_bank.get_customer(state.customer_id),
             state.started_at.date(),
         )
+        if state.v2_1:  # the customer's yes must answer a read-back
+            problems += readback_problems(
+                details, state.last_bot_reply, state.started_at.date()
+            )
         if problems:
             return {
                 "recorded": False,

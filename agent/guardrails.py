@@ -28,7 +28,15 @@ SAFE_LINES = {
     "waiver": "I've noted your request. A colleague from the bank will call you back about the late fee.",
     "figure_before_otp": "I can share the details as soon as you're verified.",
     "figure": "A colleague will confirm the exact figure.",
+    "tool_name": "",  # v2.1: the sentence is dropped, with nothing said in its place
 }
+
+# v2.1: the bot naming its own tools to the customer ("I'll call send_otp now").
+TOOL_NAME = re.compile(
+    r"\b(?:send_otp|verify_otp|get_account_summary|record_outcome)\b"
+    r"|\b(?:tool|function) call\b",
+    re.IGNORECASE,
+)
 
 CREDIT_SCORE = re.compile(
     r"cibil|credit\s*(?:score|rating|report|history|record|bureau)s?|creditworth\w*",
@@ -131,17 +139,20 @@ def numbers_in(text: str) -> set[float]:
 
 
 def check_reply(
-    text: str, allowed: set[float], verified: bool
+    text: str, allowed: set[float], verified: bool, tool_names: bool = False
 ) -> tuple[str, list[dict]]:
     """Check a reply sentence by sentence before it is spoken.
 
     allowed: the numbers the bot may say, from config, tool results and the customer.
+    tool_names (v2.1): also drop sentences that name the bot's tools.
     Returns the reply to speak and one entry per blocked sentence.
     """
     spoken, blocks = [], []
     for sentence in _sentences(MARKUP.sub(" ", text)):
         rule = None
-        if CREDIT_SCORE.search(sentence):
+        if tool_names and TOOL_NAME.search(sentence):
+            rule = "tool_name"
+        elif CREDIT_SCORE.search(sentence):
             rule = "credit_score"
         elif LEGAL.search(sentence):
             rule = "legal"
@@ -164,7 +175,7 @@ def check_reply(
         blocks.append(
             {"rule": rule, "sentence": sentence, "replaced_with": SAFE_LINES[rule]}
         )
-        if SAFE_LINES[rule] not in spoken:  # say each safe line once
+        if SAFE_LINES[rule] and SAFE_LINES[rule] not in spoken:  # each safe line once
             spoken.append(SAFE_LINES[rule])
     return " ".join(spoken), blocks
 
@@ -274,6 +285,23 @@ def callback_problems(
     if reason == "verification_failed" and failed_otp_attempts < 1:
         return ["no code has failed verification in this call"]
     return []
+
+
+def readback_problems(details: dict, last_bot_reply: str, today: date) -> list[str]:
+    """v2.1: a promise is recorded only after the bot has read it back: its last reply
+    to the customer must state the promised amount and date (the customer's yes then
+    answers that read-back, not their own sentence)."""
+    try:
+        promised = date.fromisoformat(str(details.get("date")))
+    except ValueError:
+        return []  # promise_problems already reports a date that is not a date
+    if details.get("amount") in numbers_in(last_bot_reply) and promised in dates_meant(
+        last_bot_reply, today
+    ):
+        return []
+    return [
+        "you have not read the date and amount back to the customer in your last reply"
+    ]
 
 
 def spoken_seconds(turns: list[str]) -> int:

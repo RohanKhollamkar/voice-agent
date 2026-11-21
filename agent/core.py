@@ -434,7 +434,9 @@ class Agent:
                 self.messages[index]["content"] = ""
                 self._log(type="discarded_text", text=piece, reason="announcement")
                 continue
-            reply, blocks = check_reply(piece, self.allowed_numbers, verified)
+            reply, blocks = check_reply(
+                piece, self.allowed_numbers, verified, tool_names=self.state.v2_1
+            )
             for block in blocks:
                 self._log(type="guardrail_block", **block)
             self.messages[index]["content"] = reply  # the history holds what was said
@@ -579,6 +581,7 @@ class Agent:
     ) -> str:
         """Log each utterance as its own bot turn and save the transcript. Returns the
         utterances one per line, so a caller can print or speak them separately."""
+        self.state.last_bot_reply = " ".join(utterances)
         for number, text in enumerate(utterances, start=1):
             last = number == len(utterances)
             extra = {"closing": True} if closing and last else {}
