@@ -187,6 +187,11 @@ def now() -> datetime:
     return datetime.now(ZoneInfo(config.TIMEZONE))
 
 
+# Evals run every call on a fixed simulated clock (run_evals --clock): each call starts
+# at this moment and its time then moves on in real time. None: the real clock.
+SIMULATED_START: datetime | None = None
+
+
 def spoken_day(day: date, with_iso: bool = False) -> str:
     """ "Friday, 20 November 2026", with " (2026-11-20)" added if asked."""
     text = f"{day:%A}, {day.day} {day:%B %Y}"
@@ -202,7 +207,7 @@ def upcoming_dates(today: date, days: int = 14) -> str:
     )
 
 
-def build_system_prompt(version: str, customer: dict) -> str:
+def build_system_prompt(version: str, customer: dict, today: datetime) -> str:
     """The version's prompt file, with the facts of this call.
 
     v1 gets the account appended, because its prompt says it knows the account. v2's
@@ -217,15 +222,15 @@ def build_system_prompt(version: str, customer: dict) -> str:
     if version != "v1":
         return (
             prompt.replace("{bot_name}", config.BOT_NAME)
-            .replace("{today}", spoken_day(now().date(), with_iso=True))
-            .replace("{upcoming_dates}", upcoming_dates(now().date()))
+            .replace("{today}", spoken_day(today.date(), with_iso=True))
+            .replace("{upcoming_dates}", upcoming_dates(today.date()))
             .replace("{customer_name}", customer["name"])
         )
 
     context = [
         "Call context:",
         f"- Your name is {config.BOT_NAME}.",  # the same name as v2's
-        f"- Today is {now():%A, %Y-%m-%d}.",
+        f"- Today is {today:%A, %Y-%m-%d}.",
         f"- You are calling {customer['name']}.",
     ]
     if version == "v1":
@@ -253,12 +258,19 @@ class Agent:
         words said (text mode, where replies come back in a second), "wall" uses the
         real clock (voice mode)."""
         customer = mock_bank.get_customer(customer_id)
+        # This call's clock: real time, or shifted to start at SIMULATED_START.
+        offset = (SIMULATED_START - now()) if SIMULATED_START else timedelta(0)
+
+        def call_clock() -> datetime:
+            return now() + offset
+
         self.state = CallState(
             call_id=str(uuid.uuid4()),
             customer_id=customer_id,
             bot_version=version,
-            started_at=now(),
+            started_at=call_clock(),
             guarded=version != "v1",
+            clock=call_clock,
         )
         self.clock = clock
         self.time_note_sent = False
@@ -273,7 +285,12 @@ class Agent:
             max_retries=0,  # our own fallback to the backup model handles failures
         )
         self.messages: list[dict] = [
-            {"role": "system", "content": build_system_prompt(version, customer)}
+            {
+                "role": "system",
+                "content": build_system_prompt(
+                    version, customer, self.state.started_at
+                ),
+            }
         ]
         self.events: list[dict] = []  # the transcript: turns, tool calls, errors
         # Called with each event as it is logged (the demo console streams them).
@@ -312,7 +329,7 @@ class Agent:
     def elapsed_seconds(self) -> float:
         """How long the call has run, by the agent's clock."""
         if self.clock == "wall":
-            return (now() - self.state.started_at).total_seconds()
+            return (self.state.clock() - self.state.started_at).total_seconds()
         return spoken_seconds(
             [e["text"] for e in self.events if e["type"] in ("bot", "customer")]
         )
@@ -328,6 +345,7 @@ class Agent:
         content = text
         if speaker == "customer":
             self.state.customer_turns.append(text)
+            self.state.turns.append(("customer", text))
             self.allowed_numbers |= numbers_in(text)
             if self.state.guarded:
                 if self._forced_transfer(text):
@@ -581,7 +599,7 @@ class Agent:
     ) -> str:
         """Log each utterance as its own bot turn and save the transcript. Returns the
         utterances one per line, so a caller can print or speak them separately."""
-        self.state.last_bot_reply = " ".join(utterances)
+        self.state.turns.append(("bot", " ".join(utterances)))
         for number, text in enumerate(utterances, start=1):
             last = number == len(utterances)
             extra = {"closing": True} if closing and last else {}
@@ -685,7 +703,9 @@ class Agent:
             # The bot never called record_outcome, so read the outcome off the transcript.
             captured_by = "post_call_extraction"
             outcome_type, details, follow_ups, error = await extract_outcome(
-                self.client, self._transcript_text(), today=f"{now():%Y-%m-%d}"
+                self.client,
+                self._transcript_text(),
+                today=f"{self.state.clock():%Y-%m-%d}",
             )
             self._log(
                 type="post_call_extraction",
@@ -707,7 +727,7 @@ class Agent:
             customer_id=self.state.customer_id,
             bot_version=self.state.bot_version,
             started_at=self.state.started_at,
-            ended_at=now(),
+            ended_at=self.state.clock(),
             otp_verified=self.state.otp_verified,
             outcome_type=self.state.outcome_type,
             details=self.state.outcome_details,
@@ -755,7 +775,9 @@ class Agent:
             if self.state.v2_1 and outcome_type == "CALLBACK_REQUEST":
                 details = {
                     **details,
-                    "time": future_callback_time(details.get("time"), now()),
+                    "time": future_callback_time(
+                        details.get("time"), self.state.clock()
+                    ),
                 }
             return outcome_type, details, follow_ups
         self._log(type="extraction_rejected", details=details, problems=problems)
@@ -777,7 +799,7 @@ class Agent:
         )
 
     def _log(self, **event) -> None:
-        elapsed = (now() - self.state.started_at).total_seconds()
+        elapsed = (self.state.clock() - self.state.started_at).total_seconds()
         event = {"at_seconds": round(elapsed, 2), **event}
         self.events.append(event)
         for listener in self.listeners:

@@ -287,21 +287,45 @@ def callback_problems(
     return []
 
 
-def readback_problems(details: dict, last_bot_reply: str, today: date) -> list[str]:
-    """v2.1: a promise is recorded only after the bot has read it back: its last reply
-    to the customer must state the promised amount and date (the customer's yes then
-    answers that read-back, not their own sentence)."""
+# A customer line that is itself a promise ("OK, I'll pay on Friday"), not a yes to a
+# read-back.
+OWN_PROMISE = re.compile(
+    r"\bpay\b|\bpaying\b|\bbhar\b|\bbharunga|\bd(?:u|oo)ng[aei]\b|\bkar(?:u|oo)ng[aei]\b"
+    r"|\bjama\b",
+    re.IGNORECASE,
+)
+
+
+def readback_problems(
+    details: dict, turns: list[tuple[str, str]], today: date
+) -> list[str]:
+    """v2.1: a promise is recorded only after a read-back. Some earlier bot turn in the
+    call must state the promised amount and date, and a later customer turn must agree
+    to it: a yes-word in its first few words, and not a promise of its own."""
     try:
         promised = date.fromisoformat(str(details.get("date")))
     except ValueError:
         return []  # promise_problems already reports a date that is not a date
-    if details.get("amount") in numbers_in(last_bot_reply) and promised in dates_meant(
-        last_bot_reply, today
-    ):
-        return []
-    return [
-        "you have not read the date and amount back to the customer in your last reply"
+    read_back = [
+        index
+        for index, (speaker, text) in enumerate(turns)
+        if speaker == "bot"
+        and details.get("amount") in numbers_in(text)
+        and promised in dates_meant(text, today)
     ]
+    if not read_back:
+        return ["you have not read the date and amount back to the customer"]
+    agreed = any(
+        speaker == "customer"
+        and AGREEMENT.search(" ".join(text.split()[:6]))
+        and not OWN_PROMISE.search(text)
+        for speaker, text in turns[read_back[-1] + 1 :]
+    )
+    if not agreed:
+        return [
+            "the customer has not said yes to your read-back of the date and amount"
+        ]
+    return []
 
 
 def spoken_seconds(turns: list[str]) -> int:

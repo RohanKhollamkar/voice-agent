@@ -7,6 +7,11 @@ Run from the repo root:
     python -m evals.run_evals --version v1 --no-judge --concurrency 3
     python -m evals.run_evals --version v1 --runs 3
     python -m evals.run_evals --version v2 --set heldout   (the held-out scenarios H01-H05)
+    python -m evals.run_evals --version v2 --clock real    (today instead of the fixed clock)
+
+Every call runs on a fixed simulated clock by default (DEFAULT_CLOCK, Monday 16 November
+2026, 11:00 IST): each call starts at that moment, so dates and times in the results do
+not depend on the day or hour the evals are run. The clock is recorded in each result.
 
 Writes runs/results/<version>[_heldout]_<timestamp>.csv (one row per scenario and
 check, each naming the commit and the judge model) and a summary next to it. Transcripts go to runs/transcripts/ as for any call.
@@ -19,11 +24,13 @@ import csv
 import json
 import re
 import subprocess
+from datetime import datetime
 from pathlib import Path
 
 import yaml
 from openai import AsyncOpenAI, OpenAIError
 
+import agent.core
 import config
 from agent import mock_bank
 from agent.core import Agent, now
@@ -41,6 +48,7 @@ SCENARIO_SETS = {
 SCENARIOS_DIR = SCENARIO_SETS["main"]
 CATEGORIES = ("factual", "compliance", "scope_drift", "adherence")
 HANGUP = "[HANGUP]"
+DEFAULT_CLOCK = "2026-11-16T11:00:00+05:30"  # a Monday, before the 20th, during the day
 
 # Scripted customers: a line can wait for a trigger. While it waits, the customer
 # says WAITING_LINE to let the bot carry on. After this many bot turns without
@@ -515,7 +523,12 @@ async def main(
     judge: bool,
     concurrency: int,
     scenario_set: str = "main",
+    clock: str = DEFAULT_CLOCK,
 ) -> None:
+    # Each call starts at this moment ("real": the real clock).
+    agent.core.SIMULATED_START = (
+        None if clock == "real" else datetime.fromisoformat(clock)
+    )
     if not post_webhook:
         config.WEBHOOK_URL = (
             ""  # eval calls are not real outcomes; keep them off the webhook
@@ -539,6 +552,7 @@ async def main(
     for row in rows:  # every result names the code and the judge that produced it
         row["commit"] = commit
         row["judge_model"] = config.JUDGE_MODEL if judge else "none"
+        row["clock"] = clock
 
     results_dir = config.RUNS_DIR / "results"
     results_dir.mkdir(parents=True, exist_ok=True)
@@ -553,7 +567,7 @@ async def main(
     summary = summarise(rows, version)
     summary += (
         f"\nScenario set: {scenario_set}. Commit: {commit}. "
-        f"Judge model: {config.JUDGE_MODEL if judge else 'none'}."
+        f"Judge model: {config.JUDGE_MODEL if judge else 'none'}. Clock: {clock}."
     )
     if not judge:
         summary += "\nJudge checks were skipped (--no-judge)."
@@ -623,6 +637,12 @@ if __name__ == "__main__":
         help="main: S01-S19 (the default); heldout: H01-H05",
     )
     parser.add_argument(
+        "--clock",
+        default=DEFAULT_CLOCK,
+        help="ISO date-time every call starts at (default Monday 16 Nov 2026, 11:00 "
+        "IST), or 'real' for the real clock",
+    )
+    parser.add_argument(
         "--post-webhook",
         action="store_true",
         help="also POST each eval call's outcome to WEBHOOK_URL (off by default)",
@@ -639,5 +659,6 @@ if __name__ == "__main__":
             not args.no_judge,
             args.concurrency,
             args.set,
+            args.clock,
         )
     )

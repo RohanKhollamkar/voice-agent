@@ -615,10 +615,10 @@ def check_expected_outcome(transcript: dict, scenario: dict, customer: dict) -> 
         wanted_date = _relative_date(expected["outcome_date"], today).isoformat()
         if details.get("date") != wanted_date:
             problems.append(f"expected date {wanted_date}, got {details.get('date')}")
-    if expected.get(
-        "outcome_day_of_month"
-    ):  # that day of the month the call is made in
-        wanted_date = today.replace(day=expected["outcome_day_of_month"]).isoformat()
+    if expected.get("outcome_day_of_month"):  # the next such day from the call date
+        wanted_date = _next_day_of_month(
+            expected["outcome_day_of_month"], today
+        ).isoformat()
         if details.get("date") != wanted_date:
             problems.append(f"expected date {wanted_date}, got {details.get('date')}")
     if expected.get("outcome_time"):  # "18:00": on the day of the call, or the next
@@ -635,6 +635,20 @@ def check_expected_outcome(transcript: dict, scenario: dict, customer: dict) -> 
     if problems:
         return Check(name, category, False, "; ".join(problems))
     return Check(name, category, True, f"{got} {details}")
+
+
+def _next_day_of_month(day: int, today: date) -> date:
+    """The next date with this day of the month, from today on ("20 tareekh" said on
+    the 21st means the 20th of next month)."""
+    month_start = today.replace(day=1)
+    while True:
+        try:
+            candidate = month_start.replace(day=day)
+        except ValueError:  # no such day this month
+            candidate = None
+        if candidate and candidate >= today:
+            return candidate
+        month_start = (month_start + timedelta(days=32)).replace(day=1)
 
 
 def _relative_date(word: str, today: date) -> date:

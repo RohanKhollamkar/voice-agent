@@ -4,6 +4,7 @@ The model never passes a customer ID: every tool acts on the customer this call
 is for, so the bot cannot be talked into opening someone else's account.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -42,7 +43,12 @@ class CallState:
     follow_ups: list | None = None
     guarded: bool = False  # v2: code guardrails on (see agent/guardrails.py)
     tools_done: set[str] = field(default_factory=set)  # tools that ran without error
-    last_bot_reply: str = ""  # what the bot said in its last turn
+    # The spoken turns so far, in order: ("bot" or "customer", text).
+    turns: list[tuple[str, str]] = field(default_factory=list)
+    # The call's clock: real time, or the evals' simulated clock (agent.core).
+    clock: Callable[[], datetime] = field(
+        default=lambda: datetime.now(ZoneInfo(config.TIMEZONE))
+    )
 
     @property
     def v2_1(self) -> bool:
@@ -142,9 +148,7 @@ def record_outcome(
             state.started_at.date(),
         )
         if state.v2_1:  # the customer's yes must answer a read-back
-            problems += readback_problems(
-                details, state.last_bot_reply, state.started_at.date()
-            )
+            problems += readback_problems(details, state.turns, state.started_at.date())
         if problems:
             return {
                 "recorded": False,
@@ -169,9 +173,7 @@ def record_outcome(
     moved = ""
     if state.v2_1 and outcome_type == "CALLBACK_REQUEST" and details.get("time"):
         # A callback time already past moves to the same time the next day.
-        later = future_callback_time(
-            details["time"], datetime.now(ZoneInfo(config.TIMEZONE))
-        )
+        later = future_callback_time(details["time"], state.clock())
         if later != details["time"]:
             moved = f"The time {details['time']} had passed, so it is {later}. "
             details = {**details, "time": later}
