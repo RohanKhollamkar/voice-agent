@@ -37,7 +37,7 @@ Model IDs and voices live in `config.py` and `.env`, never in the logic.
 |---|---|---|
 | v1 | The bank's prompt, unchanged. The baseline | `docs/results/final/`, `docs/results/final-3way/` |
 | v2 | A rewritten prompt plus code guardrails: a fixed opening line, the reply check, the OTP gate, the promise read-back, forced transfers, the call timer and outcome evidence rules | `docs/results/final/` (judged), `docs/results/final-3way/` |
-| v2.1 | Fixes from live voice testing: the brief's other-products line spoken by code, "kal" resolved by tense, payment modes noted, tool names blocked, a promise recorded only after the bot has read it back and the customer agreed, past callback times moved to the next day, a helpline closing line, and wrong-party callbacks | `docs/results/final-3way/`, and the voice calls in [`samples/`](samples/) |
+| v2.1 | Fixes from live voice testing: the brief's other-products line spoken by code, "kal" resolved by tense, payment modes noted, tool names blocked, a promise recorded only after the bot has read it back and the customer agreed, past callback times moved to the next day, a helpline closing line, and wrong-party callbacks | `docs/results/final-3way/`; its evidence is live voice calls (transcripts in [`samples/`](samples/)) |
 
 `v2` is kept unchanged so its results stay reproducible. `BOT_VERSION` (default `v2.1`) picks the version.
 
@@ -88,13 +88,13 @@ From [`docs/results/final-3way/`](docs/results/final-3way/headline.md): main set
 | Call length over the limit | 29% (11/38) | 3% (1/38) | 5% (2/38) |
 | Waiver approved by the bot | 21% (8/38) | 0% | 0% |
 
-v2.1 does not score better than v2 here, and isn't expected to: its fixes target behaviour the code checks don't measure (the exact products line, "kal", payment modes, the helpline close, tool names said aloud on a voice call). Its evidence is the live voice calls in [`samples/`](samples/). The v2.1 fixes made after this run (wrong-party callbacks, the callback time, the goodbye fallback, a repeated question after a refusal) are in no results table.
+v2.1 does not score better than v2 here, and isn't expected to: its fixes target behaviour the code checks don't measure (the exact products line, "kal", payment modes, the helpline close, tool names said aloud on a voice call). Its evidence comes from live voice calls; their transcripts are in [`samples/`](samples/). The v2.1 fixes made after this run (wrong-party callbacks, the callback time, the goodbye fallback, a repeated question after a refusal) are in no results table.
 
 Every check for every scenario and version, from both passes, is in [`docs/results/test_results.csv`](docs/results/test_results.csv), with a column for the run set.
 
 ## The outcome
 
-Each call produces exactly one outcome, posted to `WEBHOOK_URL` and written to `runs/outcomes/`. This one is from the v2.1 voice call in `samples/`:
+Each call produces exactly one outcome, posted to `WEBHOOK_URL` and written to `runs/outcomes/`. This one is from a v2.1 voice call (transcript in `samples/`):
 
 ```json
 {
@@ -196,9 +196,11 @@ python -m evals.run_evals --version v2.1 --set heldout --no-judge
 | `evals/` | The eval harness: scenarios, code checks, the judge |
 | `docs/` | The build plan and the scenario lists (`scenarios.csv`, `scenarios_heldout.csv`, with failure categories and brief or inferred tags) |
 | `docs/results/` | `final/` (v1 against v2, judged), `final-3way/` (all three versions, code checks), `test_results.csv`, `latency.md`. The older Stage 4 comparison (`comparison.md`, `v1_3runs.csv`, `v2_3runs.csv`) is kept for the record |
-| `samples/` | Five calls with transcripts, three with recordings; see its README |
+| `samples/` | Five call transcripts (`.txt` and `.json`), what each shows and whether it works well or broke; see its README |
 | `scripts/` | Report generators, the voice test, the speech-to-text check, and the Stage 1 spike and latency check |
 | `runs/` | Transcripts, outcomes, recordings and results written at run time; git-ignored |
+
+Call recordings are not stored in the repo; they are shared separately with the submission.
 
 ## Known limitations
 

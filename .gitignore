@@ -11,14 +11,16 @@ __pycache__/
 venv/
 .ruff_cache/
 
-# Audio
+# Audio: call recordings are not stored in the repo
 *.wav
 *.mp3
 *.ogg
+*.opus
 *.flac
 *.m4a
+*.aac
+*.webm
 *.pcm
-
-# ...except the sample call recordings
-!samples/*.wav
-!samples/*.mp3
+*.aif
+*.aiff
+*.wma
