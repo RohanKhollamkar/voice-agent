@@ -326,6 +326,30 @@ OWN_PROMISE = re.compile(
 )
 
 
+# v2.1: a bot line asking when to call back ("When is a good time to reach him?").
+ASK_TIME = re.compile(
+    r"\b(?:good|best|convenient|right) time\b|\bwhat time\b"
+    r"|\bwhen (?:can|could|should|would|will|is|might|may|does|do)\b"
+    r"|\bwhen (?:he|she|they)\b",
+    re.IGNORECASE,
+)
+
+
+def callback_time_problems(details: dict, turns: list[tuple[str, str]]) -> list[str]:
+    """v2.1: a wrong-party callback with no time is recorded only after the bot has
+    asked when to call back. It may then be null, if they gave no time."""
+    if details.get("reason") != "wrong_party" or details.get("time"):
+        return []
+    if any(speaker == "bot" and ASK_TIME.search(text) for speaker, text in turns):
+        return []
+    return [
+        (
+            "no time was asked for. Ask when is a good time to reach the customer, wait "
+            "for the answer, then record with that time (null only if none is given)"
+        )
+    ]
+
+
 def readback_problems(
     details: dict, turns: list[tuple[str, str]], today: date
 ) -> list[str]:
