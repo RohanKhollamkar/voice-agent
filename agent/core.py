@@ -27,6 +27,7 @@ from agent.dates import date_notes, mode_notes
 from agent.guardrails import (
     GOODBYE,
     PRODUCT_ASK,
+    WRONG_PARTY_PROBLEM,
     callback_problems,
     check_reply,
     closing_line,
@@ -769,8 +770,16 @@ class Agent:
             ]
         elif outcome_type == "CALLBACK_REQUEST":
             problems = callback_problems(
-                details, self.state.customer_turns, self.state.otp_failed_attempts
+                details,
+                self.state.customer_turns,
+                self.state.otp_failed_attempts,
+                third_party=self.state.v2_1,
             )
+            if problems == [
+                WRONG_PARTY_PROBLEM
+            ]:  # v2.1: the transcript says who answered
+                self._log(type="reason_corrected", old="busy", new="wrong_party")
+                details, problems = {**details, "reason": "wrong_party"}, []
         if not problems:
             if self.state.v2_1 and outcome_type == "CALLBACK_REQUEST":
                 details = {

@@ -160,7 +160,10 @@ def record_outcome(
     if state.guarded and outcome_type == "CALLBACK_REQUEST":
         # A callback reason must come from the call, not be guessed ("busy").
         problems = callback_problems(
-            details, state.customer_turns, state.otp_failed_attempts
+            details,
+            state.customer_turns,
+            state.otp_failed_attempts,
+            third_party=state.v2_1,
         )
         if problems:
             return {

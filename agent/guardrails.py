@@ -273,13 +273,43 @@ LATER = re.compile(
 )
 
 
+WRONG_PARTY_PROBLEM = "the person on the line said they are not the customer, so the reason is wrong_party"
+
+
+# v2.1: the person on the line says they are not the customer ("Vikram isn't home,
+# I'm his wife"). Third person only, so "I'm not home, call later" stays "busy".
+THIRD_PARTY = re.compile(
+    r"\bI(?:'m| am) (?:his|her)\b"
+    r"|\b\w+ (?:isn't|is not|is out)(?: at)? home\b"
+    r"|\b(?:he|she) (?:isn't|is not|is out|has gone)\b"
+    r"|\b(?:he's|she's) (?:not|out)\b|wrong number"
+    r"|\b(?:wo|woh|vo|ve) (?:ghar|yahan|yaha)\b.*\bnahi"
+    r"|\bmain (?:unki|unka|unke) (?:wife|biwi|patni|pati|beta|beti|bhai|behen)\b",
+    re.IGNORECASE,
+)
+
+
+def third_party_answered(customer_turns: list[str]) -> bool:
+    """v2.1: someone other than the customer said so, in answer to the opening's "Am I
+    speaking with ...?". Only the first two replies count, so a relative in a story
+    later in the call does not."""
+    return any(THIRD_PARTY.search(turn) for turn in customer_turns[:2])
+
+
 def callback_problems(
-    details: dict, customer_turns: list[str], failed_otp_attempts: int
+    details: dict,
+    customer_turns: list[str],
+    failed_otp_attempts: int,
+    third_party: bool = False,
 ) -> list[str]:
     """Why a callback reason is not supported by the call ([] if it is). "busy" needs
     the customer to have said they are busy or asked for a later time;
-    "verification_failed" needs at least one code that failed verification."""
+    "verification_failed" needs at least one code that failed verification. With
+    third_party (v2.1), "busy" is refused when someone other than the customer
+    answered: that call is "wrong_party"."""
     reason = details.get("reason")
+    if third_party and reason == "busy" and third_party_answered(customer_turns):
+        return [WRONG_PARTY_PROBLEM]
     if reason == "busy" and not LATER.search(" ".join(customer_turns)):
         return ["the customer has not said they are busy or asked to be called later"]
     if reason == "verification_failed" and failed_otp_attempts < 1:
