@@ -457,6 +457,17 @@ class Agent:
                 self.messages[index]["content"] = ""
                 self._log(type="discarded_text", text=piece, reason="announcement")
                 continue
+            if (
+                self.state.v2_1
+                and before_tool
+                and number < len(pieces) - 1
+                and self._tool_refused(index)
+            ):
+                # v2.1: the model spoke again after the refusal, with the refusal in
+                # view; saying both repeats the question ("When is a good time ...?").
+                self.messages[index]["content"] = ""
+                self._log(type="discarded_text", text=piece, reason="superseded")
+                continue
             reply, blocks = check_reply(
                 piece, self.allowed_numbers, verified, tool_names=self.state.v2_1
             )
@@ -468,6 +479,19 @@ class Agent:
         if self._product_turn:
             utterances = self._other_products_line(pieces, utterances)
         return utterances or [self._fallback_line()]
+
+    def _tool_refused(self, index: int) -> bool:
+        """Whether a tool called by the assistant message at this index returned an
+        error (a refusal such as "Not recorded: ...")."""
+        for message in self.messages[index + 1 :]:
+            if message.get("role") != "tool":
+                break
+            try:
+                if "error" in json.loads(message["content"]):
+                    return True
+            except (json.JSONDecodeError, TypeError):
+                continue
+        return False
 
     def _fallback_line(self) -> str:
         """What the bot says when it has nothing to say: the models failed, or every
