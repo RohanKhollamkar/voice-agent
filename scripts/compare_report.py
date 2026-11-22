@@ -7,7 +7,8 @@ Run from the repo root, one --version per bot, each with its main-set and held-o
         --version v2.1 V21_MAIN.csv V21_HELDOUT.csv
 
 Writes comparison.md, held_out.md, guardrails.md, outcomes.md and headline.md, and
-copies the CSVs next to them. Every number comes from the CSVs and the transcripts they
+copies the CSVs next to them. A held-out CSV given as "-" means no held-out run: then
+held_out.md is not written and the other reports leave held-out out. Every number comes from the CSVs and the transcripts they
 point to. The helpers are shared with scripts/final_report.py (the two-version report
 of docs/results/final/, kept as it was).
 """
@@ -306,6 +307,8 @@ def outcomes(versions: dict) -> str:
     for name, v in versions.items():
         for label, key in (("main", "main"), ("held-out", "heldout")):
             rows = v[key]
+            if not rows:
+                continue
             columns.append(
                 (
                     f"{name} {label}",
@@ -353,12 +356,14 @@ def headline(versions: dict) -> str:
     first = versions[names[0]]["main"]
     runs = len({r["run"] for r in first})
     full = runs * len({r["scenario_id"] for r in first})
+    has_heldout = all(v["heldout"] for v in versions.values())
     L = [
         "# Headline numbers",
         "",
         (
-            f"Main set S01–S19, {runs} runs per version; held-out H01–H05, 1 run. "
-            f"{meta(versions[names[-1]]['main'])}."
+            f"Main set S01–S19, {runs} runs per version; "
+            + ("held-out H01–H05, 1 run. " if has_heldout else "no held-out run. ")
+            + f"{meta(versions[names[-1]]['main'])}."
         ),
         "v2.1's changes came from live voice tests, not from the held-out set.",
         "",
@@ -369,12 +374,17 @@ def headline(versions: dict) -> str:
         "| Main, check level (failed out of applicable) | "
         + " | ".join(pct(*rate(v["main"])) for v in versions.values())
         + " |",
-        "| Held-out, scenario level | "
-        + " | ".join(pct(*scenario_level(v["heldout"])) for v in versions.values())
-        + " |",
-        "| Held-out, check level | "
-        + " | ".join(pct(*rate(v["heldout"])) for v in versions.values())
-        + " |",
+    ]
+    if has_heldout:
+        L += [
+            "| Held-out, scenario level | "
+            + " | ".join(pct(*scenario_level(v["heldout"])) for v in versions.values())
+            + " |",
+            "| Held-out, check level | "
+            + " | ".join(pct(*rate(v["heldout"])) for v in versions.values())
+            + " |",
+        ]
+    L += [
         "",
         f"Rules with {full} calls behind them in every version (failure rate):",
         "",
@@ -407,15 +417,17 @@ def main() -> None:
     for name, main_path, heldout_path in args.version:
         versions[name] = {
             "main": load(main_path),
-            "heldout": load(heldout_path),
+            "heldout": load(heldout_path) if heldout_path != "-" else [],
             "main_path": main_path,
             "heldout_path": heldout_path,
         }
         shutil.copy(main_path, out / f"{name}_main.csv")
-        shutil.copy(heldout_path, out / f"{name}_heldout.csv")
+        if heldout_path != "-":
+            shutil.copy(heldout_path, out / f"{name}_heldout.csv")
+    has_heldout = all(v["heldout"] for v in versions.values())
     for file_name, build in (
         ("comparison.md", comparison),
-        ("held_out.md", held_out),
+        *((("held_out.md", held_out),) if has_heldout else ()),
         ("guardrails.md", guardrails),
         ("outcomes.md", outcomes),
         ("headline.md", headline),

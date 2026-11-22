@@ -1,0 +1,28 @@
+Call 0a9ff963-f5e1-4627-9664-7439a89b2fe5
+Customer C001, bot v2, started 2026-11-20T13:56:48+05:30
+
+[0:02.1] Bot: Hello, this is Asha, an automated assistant from Mumbai Bank. Am I speaking with Arjun Mehta?
+[0:10.5] Customer: Yes, speaking.
+[0:12.3] Bot: This call is about your Mumbai Bank credit card payment. Let me verify you first by sending a code to your registered mobile.
+[0:12.3] Bot: I've sent a code to your phone ending in 0001. Please read it out so I can verify you.
+
+Outcome:
+{
+  "call_id": "0a9ff963-f5e1-4627-9664-7439a89b2fe5",
+  "customer_id": "C001",
+  "bot_version": "v2",
+  "started_at": "2026-11-20T13:56:48+05:30",
+  "ended_at": "2026-11-20T13:57:29+05:30",
+  "duration_seconds": 42,
+  "otp_verified": false,
+  "outcome_type": "CALLBACK_REQUEST",
+  "details": {
+    "CALLBACK_REQUEST": {
+      "time": null,
+      "reason": "busy"
+    }
+  },
+  "follow_ups": [],
+  "captured_by": "tool_call",
+  "transcript_path": "runs/transcripts/0a9ff963-f5e1-4627-9664-7439a89b2fe5.json"
+}

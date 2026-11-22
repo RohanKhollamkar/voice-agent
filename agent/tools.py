@@ -13,6 +13,7 @@ import config
 from agent import mock_bank
 from agent.guardrails import (
     callback_problems,
+    callback_time_problems,
     future_callback_time,
     promise_problems,
     readback_problems,
@@ -160,8 +161,13 @@ def record_outcome(
     if state.guarded and outcome_type == "CALLBACK_REQUEST":
         # A callback reason must come from the call, not be guessed ("busy").
         problems = callback_problems(
-            details, state.customer_turns, state.otp_failed_attempts
+            details,
+            state.customer_turns,
+            state.otp_failed_attempts,
+            third_party=state.v2_1,
         )
+        if state.v2_1:  # a wrong-party callback needs the time asked for first
+            problems += callback_time_problems(details, state.turns)
         if problems:
             return {
                 "recorded": False,

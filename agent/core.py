@@ -27,6 +27,7 @@ from agent.dates import date_notes, mode_notes
 from agent.guardrails import (
     GOODBYE,
     PRODUCT_ASK,
+    WRONG_PARTY_PROBLEM,
     callback_problems,
     check_reply,
     closing_line,
@@ -55,6 +56,10 @@ CALL_CONNECTED = "[The customer has answered the call.]"
 
 # Said if both models fail or the model loops on tools, so the call never crashes.
 FALLBACK_LINE = "I'm sorry, I'm having trouble on my side. Could you say that again?"
+# v2.1: the same, when the customer's last words were a goodbye. Asking them to repeat
+# a "bye" makes no sense; nothing is promised, and the outcome is settled when they hang
+# up (finish()).
+FALLBACK_GOODBYE_LINE = "Thank you for your time. Goodbye."
 
 MAX_TOOL_ROUNDS = 5  # model -> tools -> model ... per customer turn
 
@@ -452,6 +457,17 @@ class Agent:
                 self.messages[index]["content"] = ""
                 self._log(type="discarded_text", text=piece, reason="announcement")
                 continue
+            if (
+                self.state.v2_1
+                and before_tool
+                and number < len(pieces) - 1
+                and self._tool_refused(index)
+            ):
+                # v2.1: the model spoke again after the refusal, with the refusal in
+                # view; saying both repeats the question ("When is a good time ...?").
+                self.messages[index]["content"] = ""
+                self._log(type="discarded_text", text=piece, reason="superseded")
+                continue
             reply, blocks = check_reply(
                 piece, self.allowed_numbers, verified, tool_names=self.state.v2_1
             )
@@ -462,7 +478,33 @@ class Agent:
                 utterances.append(reply)
         if self._product_turn:
             utterances = self._other_products_line(pieces, utterances)
-        return utterances or [FALLBACK_LINE]
+        return utterances or [self._fallback_line()]
+
+    def _tool_refused(self, index: int) -> bool:
+        """Whether a tool called by the assistant message at this index returned an
+        error (a refusal such as "Not recorded: ...")."""
+        for message in self.messages[index + 1 :]:
+            if message.get("role") != "tool":
+                break
+            try:
+                if "error" in json.loads(message["content"]):
+                    return True
+            except (json.JSONDecodeError, TypeError):
+                continue
+        return False
+
+    def _fallback_line(self) -> str:
+        """What the bot says when it has nothing to say: the models failed, or every
+        sentence was blocked. v2.1: a goodbye if the customer just said goodbye."""
+        last = self.state.turns[-1] if self.state.turns else None
+        if (
+            self.state.v2_1
+            and last
+            and last[0] == "customer"
+            and GOODBYE.search(last[1])
+        ):
+            return FALLBACK_GOODBYE_LINE
+        return FALLBACK_LINE
 
     def _other_products_line(
         self, pieces: list[tuple[str, int]], utterances: list[str]
@@ -769,8 +811,16 @@ class Agent:
             ]
         elif outcome_type == "CALLBACK_REQUEST":
             problems = callback_problems(
-                details, self.state.customer_turns, self.state.otp_failed_attempts
+                details,
+                self.state.customer_turns,
+                self.state.otp_failed_attempts,
+                third_party=self.state.v2_1,
             )
+            if problems == [
+                WRONG_PARTY_PROBLEM
+            ]:  # v2.1: the transcript says who answered
+                self._log(type="reason_corrected", old="busy", new="wrong_party")
+                details, problems = {**details, "reason": "wrong_party"}, []
         if not problems:
             if self.state.v2_1 and outcome_type == "CALLBACK_REQUEST":
                 details = {
