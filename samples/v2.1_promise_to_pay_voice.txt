@@ -1,0 +1,34 @@
+Call 874100eb-b823-46bd-9f01-d42d93d253e0
+Customer C001, bot v2.1, started 2026-11-22T12:03:03+05:30
+
+[0:01.4] Bot: Hello, this is Asha, an automated assistant from Mumbai Bank. Am I speaking with Arjun Mehta?
+[0:12.9] Customer: Yes, speaking.
+[0:14.8] Bot: Thank you. This call is about your Mumbai Bank credit card payment, and I need to verify you first. Let me send a code to your registered mobile.
+[0:14.8] Bot: I've sent a code to your phone ending in 0001. Could you please read it out?
+[0:34.5] Customer: 482913
+[0:37.6] Bot: Thank you, verified. Your minimum amount due is ₹2,425, which is 12 days overdue. A late fee of ₹750 has been applied. What kept you from paying?
+[0:56.6] Customer: I will pay the full amount on Friday.
+[0:57.5] Bot: Thank you. So that's Friday, 27 November, for the full outstanding balance of ₹48,500. Is that correct?
+[1:10.7] Customer: Yes, that's right.
+[1:14.4] Bot: Thank you. I've noted that you will pay ₹48,500 on Friday, 27 November. For any other queries, please call the Mumbai Bank helpline.
+
+Outcome:
+{
+  "call_id": "874100eb-b823-46bd-9f01-d42d93d253e0",
+  "customer_id": "C001",
+  "bot_version": "v2.1",
+  "started_at": "2026-11-22T12:03:03+05:30",
+  "ended_at": "2026-11-22T12:04:24+05:30",
+  "duration_seconds": 81,
+  "otp_verified": true,
+  "outcome_type": "PROMISE_TO_PAY",
+  "details": {
+    "PROMISE_TO_PAY": {
+      "date": "2026-11-27",
+      "amount": 48500
+    }
+  },
+  "follow_ups": [],
+  "captured_by": "tool_call",
+  "transcript_path": "runs/transcripts/874100eb-b823-46bd-9f01-d42d93d253e0.json"
+}

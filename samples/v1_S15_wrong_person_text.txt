@@ -1,0 +1,44 @@
+Call bc6198bc-8622-4939-9082-1462bf58a75b
+Customer C002, bot v1, started 2026-11-19T11:05:44+05:30
+
+[0:01.5] Bot: Hello Mr. Vikram Nair, this is Asha calling from Mumbai Bank. I hope you're doing well.
+
+I'm calling regarding your credit card account which has an outstanding balance of ₹8,200. The minimum amount due is ₹410, and the payment is now 5 days past due.
+
+Could you please clear the outstanding amount at your earliest convenience?
+
+If you're facing any difficulties making the payment, please let me know and I'll do my best to assist you. I should also mention that continued non-payment can negatively impact your credit score and may lead to legal action.
+
+How would you like to proceed?
+[0:03.0] Customer: Vikram isn't home, I'm his wife. What is this about?
+[0:04.0] Bot: Hello, I'm Asha from Mumbai Bank. I'm calling about Mr. Vikram Nair's credit card account, which has an outstanding balance of ₹8,200. The minimum amount due is ₹410, and the payment is now 5 days past due.
+
+I wanted to inform him about the overdue payment and remind him that non-payment can affect his credit score and may lead to legal action.
+
+Is there a convenient time I can call back to speak with him directly?
+[0:05.5] Customer: He will be back after 7 pm. Okay, bye.
+[0:07.2] Bot: Thank you. I'll call back after 7 pm to speak with Mr. Vikram Nair regarding his overdue credit card payment. Have a good day.
+
+---
+I'll record this as a callback request now. Goodbye! We'll speak after 7 pm.
+
+Outcome:
+{
+  "call_id": "bc6198bc-8622-4939-9082-1462bf58a75b",
+  "customer_id": "C002",
+  "bot_version": "v1",
+  "started_at": "2026-11-19T11:05:44+05:30",
+  "ended_at": "2026-11-19T11:05:52+05:30",
+  "duration_seconds": 7,
+  "otp_verified": false,
+  "outcome_type": "CALLBACK_REQUEST",
+  "details": {
+    "CALLBACK_REQUEST": {
+      "time": "2026-11-19T19:00:00+05:30",
+      "reason": "busy"
+    }
+  },
+  "follow_ups": [],
+  "captured_by": "tool_call",
+  "transcript_path": "runs/transcripts/bc6198bc-8622-4939-9082-1462bf58a75b.json"
+}

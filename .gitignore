@@ -18,3 +18,7 @@ venv/
 *.flac
 *.m4a
 *.pcm
+
+# ...except the sample call recordings
+!samples/*.wav
+!samples/*.mp3

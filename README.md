@@ -1,109 +1,212 @@
 # Mumbai Bank collections voicebot
 
-An outbound voicebot for Mumbai Bank (fictional) that calls credit card customers who missed their minimum payment, finds out why, and nudges them toward a resolution. Every call ends with one structured outcome posted to a webhook.
+An outbound collections voicebot for a fictional bank. It calls credit card customers who are 1–30 days past their minimum payment, reminds them, finds out why they haven't paid, and steers them to a resolution: a promise to pay, a callback, or a transfer to a person. Every call ends with one structured outcome posted to a webhook. It is built from separate speech-to-text, language model and speech APIs, glued together in Python with Pipecat, and runs on a laptop mic and speakers or in a browser; there is no telephony. The bank's rules are in [`CLAUDE.md`](CLAUDE.md).
 
-Status: repo scaffold only. No agent logic yet. See `CLAUDE.md` for the rules and stack, and `docs/BUILD_PLAN.md` for the build stages.
+## Architecture
 
-## Setup
+```
+ mic ─▶ Sarvam speech-to-text ─▶ agent core ─────────────▶ reply check ─▶ normaliser ─▶ Sarvam speech ─▶ speaker
+        (Hinglish, real time)    prompt + tools             (no figures    (₹750 → "seven
+                                 (OTP, account summary,      before OTP,     hundred and
+                                 record_outcome)             no CIBIL, no    fifty rupees")
+                                 + code guardrails           legal, no tool
+                                 (identity first, promise    names)
+                                 read-back, forced transfer,
+                                 call timer)
+                                        │
+                                        └─▶ outcome JSON ─▶ webhook (and runs/outcomes/)
+```
+
+The conversation logic (`agent/`) has no audio code and is shared by text mode and voice mode, so the text-mode evals test exactly what runs on a voice call; `voice/` only adds speech around it.
+
+## Stack
+
+| Layer | Choice | Why |
+|---|---|---|
+| Framework | Pipecat (Python) | Handles the audio pipeline, turn-taking and barge-in, with swappable services |
+| Speech-to-text | Sarvam, real time (`saaras:v3-realtime`) | Built for Indian languages: transcribes Hindi, English and Hinglish in one stream |
+| Speech | Sarvam Bulbul v4 Flash | An Indian English voice. ElevenLabs Flash v2.5 is supported too and swapped in with `TTS_PROVIDER=elevenlabs` |
+| Bot model | Nemotron 3.5 Super on the NVIDIA API, thinking off | Fast enough for live turns (about 1 s per call) and reliable at tool calls. Nemotron 3 Ultra is the backup on a timeout or error |
+| Eval judge | Kimi K3.1 Pro on the NVIDIA API | A different model family from the bot, so it doesn't grade its own kind; chosen in [`judge_choice.md`](docs/results/final/judge_choice.md) |
+
+Model IDs and voices live in `config.py` and `.env`, never in the logic.
+
+## Versions
+
+| Version | What changed | Results |
+|---|---|---|
+| v1 | The bank's prompt, unchanged. The baseline | `docs/results/final/`, `docs/results/final-3way/` |
+| v2 | A rewritten prompt plus code guardrails: a fixed opening line, the reply check, the OTP gate, the promise read-back, forced transfers, the call timer and outcome evidence rules | `docs/results/final/` (judged), `docs/results/final-3way/` |
+| v2.1 | Fixes from live voice testing: the brief's other-products line spoken by code, "kal" resolved by tense, payment modes noted, tool names blocked, a promise recorded only after the bot has read it back and the customer agreed, past callback times moved to the next day, a helpline closing line, and wrong-party callbacks | `docs/results/final-3way/`, and the voice calls in [`samples/`](samples/) |
+
+`v2` is kept unchanged so its results stay reproducible. `BOT_VERSION` (default `v2.1`) picks the version.
+
+## Results
+
+### Main result: v1 against v2
+
+From [`docs/results/final/`](docs/results/final/headline.md): main set S01–S19, 3 runs per version (57 calls), every call scored by code checks and the judge; commit `de12c92`.
+
+| | v1 | v2 |
+|---|---|---|
+| Calls with any failed check | 100% (57/57) | 21% (12/57) |
+| Failed checks, out of applicable | 47% (399/858) | 2% (17/909) |
+| Held-out H01–H05 (1 run), calls with any failed check | 100% (5/5) | 20% (1/5) |
+| Held-out, failed checks | 39% (32/82) | 1% (1/87) |
+
+Rules with at least 38 calls behind them (failure rate, main set):
+
+| Rule | v1 | v2 |
+|---|---|---|
+| Amount stated before OTP | 96% (55/57) | 0% (0/57) |
+| Credit score mentioned | 95% (54/57) | 0% (0/57) |
+| Tone (judge) | 96% (54/56) | 12% (7/57) |
+| Legal threat or advice | 91% (52/57) | 0% (0/57) |
+| Account details before identity confirmed | 86% (49/57) | 0% (0/57) |
+| Wrong figures (rate, fee or amount not from the tools) | 67% (38/57) | 2% (1/57) |
+| Waiver approved by the bot | 26% (15/57) | 0% (0/57) |
+| Call length over the limit | 14% (8/57) | 5% (3/57) |
+| Talked about other products | 11% (6/57) | 0% (0/57) |
+| Replied in Hindi | 4% (2/57) | 0% (0/57) |
+| No outcome recorded | 0% (0/57) | 2% (1/57) |
+
+The held-out scenarios were written after v2 was frozen, and v2 was never changed for them.
+
+### Supporting result: v1, v2 and v2.1
+
+From [`docs/results/final-3way/`](docs/results/final-3way/headline.md): main set S01–S19, 2 runs per version (38 calls), code checks only, every call on a fixed clock (Monday 16 November 2026, 11:00 IST); commit `1432ded`. The third run, the held-out set and the judge were dropped when the NVIDIA free tier rate-limited the account ([`run_notes.md`](docs/results/final-3way/run_notes.md)).
+
+| | v1 | v2 | v2.1 |
+|---|---|---|---|
+| Calls with any failed check | 100% (38/38) | 5% (2/38) | 8% (3/38) |
+| Failed checks, out of applicable | 42% (212/500) | 0% (2/534) | 1% (3/534) |
+| Account details before identity confirmed | 95% (36/38) | 0% | 0% |
+| Amount stated before OTP | 92% (35/38) | 0% | 0% |
+| Credit score mentioned | 89% (34/38) | 0% | 0% |
+| Legal threat or advice | 84% (32/38) | 0% | 0% |
+| Wrong figures | 71% (27/38) | 0% | 0% |
+| Call length over the limit | 29% (11/38) | 3% (1/38) | 5% (2/38) |
+| Waiver approved by the bot | 21% (8/38) | 0% | 0% |
+
+v2.1 does not score better than v2 here, and isn't expected to: its fixes target behaviour the code checks don't measure (the exact products line, "kal", payment modes, the helpline close, tool names said aloud on a voice call). Its evidence is the live voice calls in [`samples/`](samples/). The v2.1 fixes made after this run (wrong-party callbacks, the callback time, the goodbye fallback, a repeated question after a refusal) are in no results table.
+
+Every check for every scenario and version, from both passes, is in [`docs/results/test_results.csv`](docs/results/test_results.csv), with a column for the run set.
+
+## The outcome
+
+Each call produces exactly one outcome, posted to `WEBHOOK_URL` and written to `runs/outcomes/`. This one is from the v2.1 voice call in `samples/`:
+
+```json
+{
+  "call_id": "874100eb-b823-46bd-9f01-d42d93d253e0",
+  "customer_id": "C001",
+  "bot_version": "v2.1",
+  "started_at": "2026-11-22T12:03:03+05:30",
+  "ended_at": "2026-11-22T12:04:24+05:30",
+  "duration_seconds": 81,
+  "otp_verified": true,
+  "outcome_type": "PROMISE_TO_PAY",
+  "details": {"PROMISE_TO_PAY": {"date": "2026-11-27", "amount": 48500}},
+  "follow_ups": [],
+  "captured_by": "tool_call",
+  "transcript_path": "runs/transcripts/874100eb-b823-46bd-9f01-d42d93d253e0.json"
+}
+```
+
+The five outcome types:
+
+| Type | Details | When |
+|---|---|---|
+| `PROMISE_TO_PAY` | date, amount | The customer commits to a date and amount, read back and confirmed |
+| `ALREADY_PAID` | date, mode (UPI, net banking, card, cash, other) | The customer says they have paid; the bot says it reflects in 2 working days |
+| `CALLBACK_REQUEST` | time or null, reason: busy, waiver_request, wrong_party, call_time_limit, verification_failed, call_dropped | Asked to call later, a late-fee waiver request, someone else answered, out of time, two failed OTPs, or the call ended with nothing agreed |
+| `DISPUTE` | reason (free text) | The customer disputes the dues |
+| `TRANSFER_TO_HUMAN` | reason: abusive, medical_emergency, job_loss, customer_request | The bot stops and hands over (the transfer itself is not built) |
+
+`follow_ups` holds a second outcome a person must act on, such as a waiver request alongside a promise to pay. `captured_by` says whether the bot recorded the outcome during the call (`tool_call`) or it was read off the transcript afterwards (`post_call_extraction`).
+
+## How to run
+
+### Manual setup
+
+Python 3.11 or later.
 
 ```bash
-python -m venv .venv && source .venv/bin/activate
+python -m venv .venv
+```
+
+```bash
+source .venv/bin/activate
+```
+
+```bash
 pip install -r requirements.txt
-cp .env.example .env   # then fill in the keys
 ```
 
-Local audio uses PyAudio, which needs the PortAudio system library (`brew install portaudio` or `apt install portaudio19-dev`).
-
-## Layout
-
-```
-config.py     settings loaded from .env
-agent/        agent core: prompts, tools, outcome, mocked bank (no audio code)
-voice/        Pipecat pipeline around the agent core
-evals/        text-mode eval harness
-scripts/      the voice spike, the LLM latency check, and the voice test
-runs/         transcripts, outcomes, recordings, results (created at run time, not committed)
+```bash
+cp .env.example .env
 ```
 
-## Running
-
-The full guide is written in the last stage. For now:
+Then put your keys in `.env`: `SARVAM_API_KEY` and `NVIDIA_API_KEY` are required, and `WEBHOOK_URL` is optional (a webhook.site URL works). Every other setting is listed there with its default. Voice calls on the laptop's own mic use PyAudio, which needs PortAudio (`brew install portaudio` or `apt install portaudio19-dev`); the demo console's browser mode does not.
 
 ### Demo console
-
-One page to run and watch live calls, for the walkthrough:
 
 ```bash
 python -m voice.demo --open
 ```
 
-It serves http://localhost:7860/demo on localhost only (`--open` opens the browser for you; in Claude Code, `/live-demo` runs the same). Pick a customer, the bot version and a mode, then press Start call:
-
-- **Voice**: the browser's microphone and speakers over the browser connection (as `voice.call --echo browser`), so echo cancellation and barge-in work. Allow the microphone when asked.
-- **Text**: type the customer's turns. No speech credits.
-
-Three panes update as the call runs: the conversation (with each turn's latency and the call timer, marked at 2:30 and 3:00); behind the scenes (every tool call and guardrail action, timestamped); and the outcome JSON with the webhook's HTTP status. All three come from the events the agent writes to the call's transcript, streamed to the page; the page changes nothing about how the bot behaves. End call is the customer hanging up. When a call ends, its files are exported to `runs/exports/<call_id>/` and offered for download in the Outcome pane: `recording.wav` (voice calls; stereo, customer on the left and bot on the right), `transcript.txt` (who said what and when, and the outcome) and `transcript.json` (the full log). The code is `voice/demo.py`, `voice/demo.html` and `voice/export.py`.
+It serves http://localhost:7860/demo (localhost only). Pick a customer, the bot version and a mode, then press Start call. **Voice** uses the browser's mic and speakers, so the browser's echo cancellation applies and barge-in works; **Text** takes typed customer turns and costs no speech credits. The page shows the conversation with per-turn latency and the call timer, every tool call and guardrail action, and the outcome JSON with the webhook's status. When a call ends, its recording (stereo: customer left, bot right) and transcripts are offered for download.
 
 ![Demo console after a text-mode call](docs/results/demo_console.png)
 
-### Voice call on a laptop mic and speakers
-
-`voice.call` takes `--echo` to stop the bot hearing itself through the speakers:
+### A text call
 
 ```bash
-python -m voice.call --customer C001 --echo half-duplex
+python -m agent.chat --customer C001 --version v2.1
+```
+
+You type the customer's lines; `/end` hangs up.
+
+### A voice call
+
+```bash
+python -m voice.call --customer C001 --version v2.1 --echo browser
+```
+
+Then open http://localhost:7860/client and press Connect. `--echo half-duplex` uses the laptop mic and speakers directly, muting the mic while the bot speaks (no barge-in); `--echo none` needs headphones. `python -m scripts.voice_test` runs a whole voice call with no mic, with a synthesised customer, and reports latency per stage.
+
+### Evals
+
+```bash
+python -m evals.run_evals --version v2.1 --runs 3 --concurrency 3
 ```
 
 ```bash
-python -m voice.call --customer C001 --echo browser
+python -m evals.run_evals --version v2.1 --set heldout --no-judge
 ```
 
-- `none` (the default): mic always open. Use with headphones.
-- `half-duplex`: the mic is muted while the bot speaks and for 0.4 s after. No echo, but no barge-in: the customer cannot interrupt the bot.
-- `browser`: the call runs through Pipecat's browser connection (WebRTC), and the browser's echo cancellation cleans the mic. Barge-in still works. Open http://localhost:7860/client, allow the microphone and press Connect. Needs the `webrtc` and `runner` extras in `requirements.txt` (`pip install -r requirements.txt`).
+`--set main` (the default) runs S01–S19 and `--set heldout` runs H01–H05. `--no-judge` skips the judge and scores with code checks only. `--concurrency` sets how many calls run at once; lower it if the API rate-limits you. Every call runs on a fixed simulated clock (`--clock`, default Monday 16 November 2026, 11:00 IST), so dates such as "Friday" resolve the same way on every run. Results go to `runs/results/`; each row records the commit, the judge model and the clock.
 
-### Voice test without a microphone
+## Where things are
 
-`scripts/voice_test.py` runs a whole voice call with no mic or speaker. A scripted customer (identity, the OTP, a promise to pay, a yes to the read-back) is synthesized and played into the real pipeline in real time: Sarvam speech-to-text, the agent, the reply check, the normaliser and speech. It prints the call, its outcome and the latency of each stage per turn, and saves the transcript and a WAV recording as any voice call does.
+| Path | What |
+|---|---|
+| `agent/` | The conversation logic: prompts (`agent/prompts/`), tools, code guardrails, dates, the outcome, the mocked bank |
+| `voice/` | The Pipecat pipeline, the normaliser, the demo console |
+| `evals/` | The eval harness: scenarios, code checks, the judge |
+| `docs/` | The build plan and the scenario lists (`scenarios.csv`, `scenarios_heldout.csv`, with failure categories and brief or inferred tags) |
+| `docs/results/` | `final/` (v1 against v2, judged), `final-3way/` (all three versions, code checks), `test_results.csv`, `latency.md`. The older Stage 4 comparison (`comparison.md`, `v1_3runs.csv`, `v2_3runs.csv`) is kept for the record |
+| `samples/` | Five calls with transcripts, three with recordings; see its README |
+| `scripts/` | Report generators, the voice test, the speech-to-text check, and the Stage 1 spike and latency check |
+| `runs/` | Transcripts, outcomes, recordings and results written at run time; git-ignored |
 
-```bash
-python -m scripts.voice_test
-```
+## Known limitations
 
-```bash
-python -m scripts.voice_test --barge-in
-```
-
-```bash
-python -m scripts.voice_test --otp-pause 0.8
-```
-
-```bash
-python -m scripts.voice_test --noise 600
-```
-
-`--barge-in` speaks the promise over the bot, to test interruptions. `--noise` mixes background noise (a rumble, a hum and short bursts) under everything the customer's mic sends. `--otp-pause` reads the OTP in two halves with a pause, to test that it still arrives as one code. Turn-taking settings can be tried from the environment, for example `SARVAM_STT_SILENCE_MS=500 python -m scripts.voice_test`; see `docs/results/latency.md`. It needs the Sarvam and NVIDIA keys. The customer's lines are synthesised once and cached in `runs/voice_test_cache/`, so reruns cost no speech credits. Speech is Sarvam by default for both the bot and the customer; `TTS_PROVIDER=elevenlabs` switches to ElevenLabs.
-
-### Checking speech-to-text on recorded calls
-
-`scripts/stt_noise_test.py` compares what you said on recorded calls with what speech-to-text heard. List each call's transcript and your lines, in order, in a YAML file (see `scripts/stt_noise_example.yaml`), then:
-
-```bash
-python -m scripts.stt_noise_test my_calls.yaml
-```
-
-For each line it reports whether the digits (codes), amounts, dates and intent came through, with totals. It lines your lines up with the transcript's customer turns, and handles a line split over two turns, two lines merged into one, and a line lost entirely. Hindi number words, Devanagari digits and "20 tareekh" are understood. Intent is a keyword rule; where it guesses your line wrongly, give it in the YAML (`intent: waiver`). It makes no API calls.
-
-### Evaluation
-
-Text-mode evals score every call with code checks (`evals/checks.py`) and an LLM judge (`evals/judge.py`, `JUDGE_MODEL`):
-
-```bash
-python -m evals.run_evals --version v2 --runs 3 --concurrency 3
-```
-
-```bash
-python -m evals.run_evals --version v2 --set heldout
-```
-
-`--set main` (the default) runs S01–S19 from `evals/scenarios/`; `--set heldout` runs the held-out H01–H05 from `evals/scenarios_heldout/`, which v2 was never changed for. Every result row names the commit and the judge model. The final evaluation pass is in `docs/results/final/` (start with `headline.md`); its reports are generated by `python -m scripts.final_report` from the four result CSVs kept there.
+- **S18's call length.** In text mode the call length is estimated from the words spoken, and for S18 the estimate (3:56–4:13) disagrees with the call timer, which closed the call at the limit.
+- **A small held-out set.** H01–H05 is 5 scenarios, run once per version.
+- **A short 3-way run.** The v1, v2 and v2.1 comparison is 2 runs with no judge and no held-out set, cut short by NVIDIA free-tier rate limits.
+- **Reply latency.** About 2–3 s from the customer's last word to the bot's first audio; turns with tool calls are covered by "One moment." ([`latency.md`](docs/results/latency.md)).
+- **Barge-in is slow to land.** About 2.5 s: the bot stops only once speech-to-text has transcribed two of the customer's words (a yes, a no or digits interrupt at once).
+- **Phone audio untested.** Only browser and laptop audio was tested, not 8 kHz phone-line audio.
+- **Echo cancellation needed.** The browser demo relies on the browser's echo cancellation; on plain speakers without it the bot hears itself.
+- **Speech errors aren't scored.** The evals run in text mode, so speech-to-text mistakes don't show up in the scores; `scripts/stt_noise_test.py` checks them separately on recorded calls.

@@ -1,0 +1,44 @@
+Call 7803a289-bad2-4942-b364-17dc2054c34d
+Customer C001, bot v2, started 2026-11-19T11:06:47+05:30
+
+[0:00.0] Bot: Hello, this is Asha, an automated assistant from Mumbai Bank. Am I speaking with Arjun Mehta?
+[0:01.5] Customer: Yes, speaking.
+[0:03.0] Bot: Thank you. This call is about your Mumbai Bank credit card payment. Let me verify you first by sending a one-time code to your registered mobile.
+[0:03.0] Bot: I've sent a code to your registered mobile ending in 0001. Please read out the code you received.
+[0:04.6] Customer: 482913
+[0:06.3] Bot: Your minimum amount due is ₹2,425, and it is 12 days overdue. What kept you from making the payment?
+[0:07.8] Customer: Can you waive the late fee?
+[0:08.5] Bot: I've noted your request. A colleague from the bank will call you back about the late fee. Meanwhile, would you like to pay anything today?
+[0:10.0] Customer: OK, I'll pay the full amount on Friday.
+[0:10.8] Bot: Thank you. So you will pay ₹48,500 on Friday, 20 November. Is that correct?
+[0:12.3] Customer: Yes, that's right.
+[0:13.3] Bot: Thank you. I've noted your payment of ₹48,500 on Friday, 20 November. A colleague will call you back about the late fee. Goodbye.
+
+Outcome:
+{
+  "call_id": "7803a289-bad2-4942-b364-17dc2054c34d",
+  "customer_id": "C001",
+  "bot_version": "v2",
+  "started_at": "2026-11-19T11:06:47+05:30",
+  "ended_at": "2026-11-19T11:07:01+05:30",
+  "duration_seconds": 13,
+  "otp_verified": true,
+  "outcome_type": "PROMISE_TO_PAY",
+  "details": {
+    "PROMISE_TO_PAY": {
+      "date": "2026-11-20",
+      "amount": 48500
+    }
+  },
+  "follow_ups": [
+    {
+      "outcome_type": "CALLBACK_REQUEST",
+      "details": {
+        "time": null,
+        "reason": "waiver_request"
+      }
+    }
+  ],
+  "captured_by": "tool_call",
+  "transcript_path": "runs/transcripts/7803a289-bad2-4942-b364-17dc2054c34d.json"
+}
