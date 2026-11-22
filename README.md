@@ -163,9 +163,19 @@ Then put your keys in `.env`: `SARVAM_API_KEY` and `NVIDIA_API_KEY` are required
 python -m voice.demo --open
 ```
 
-It serves http://localhost:7860/demo (localhost only). Pick a customer, the bot version and a mode, then press Start call. **Voice** uses the browser's mic and speakers, so the browser's echo cancellation applies and barge-in works; **Text** takes typed customer turns and costs no speech credits. The page shows the conversation with per-turn latency and the call timer, every tool call and guardrail action, and the outcome JSON with the webhook's status. When a call ends, its recording (stereo: customer left, bot right) and transcripts are offered for download.
+It serves http://localhost:7860/demo (localhost only). Pick a customer, the bot version and a mode, then press Start call. **Voice** uses the browser's mic and speakers, so the browser's echo cancellation applies and barge-in works; **Text** takes typed customer turns and costs no speech credits.
 
-![Demo console after a text-mode call](docs/results/demo_console.png)
+![Demo console after a v2.1 text-mode call](docs/results/demo_console.png)
+
+A v2.1 text call with customer C001: identity, the OTP, a promise in Hinglish ("20 tareekh ko pura outstanding amount bhar dunga"), the read-back, and the close. What is on screen:
+
+- **Top bar.** The customer, the bot version (v1, v2 or v2.1), the mode (Voice or Text), Start call and End call (End call is the customer hanging up), and on the right the call's status.
+- **Conversation.** The call timer, with marks at 2:30 (the bot is told to wrap up) and 3:00 (the limit); in text mode it is estimated from the words spoken. Each turn is timestamped. Under each bot turn, `agent` is the time the agent took to reply, amber above 2.5 s (here 7.1 s, while the main model was rate-limited and the backup answered). In voice mode a second label gives the time from the customer's last word to the bot's first audio. `closing line` marks the goodbye that code builds from the recorded outcome.
+- **Behind the scenes.** Everything the agent did, in order, with the time since the call started: tool calls in blue (`send_otp`, `verify_otp`, `get_account_summary`, `record_outcome`, with arguments and result) and guardrail actions in purple: here a date note ("20 tareekh = Sunday, 20 December 2026") and text dropped by code (an announcement before a tool call, and what the model wrote with its `record_outcome` call, which the closing line replaces). The count is the number of entries.
+- **Outcome.** The outcome type, how it was captured (by the bot's `record_outcome` call or read off the transcript after the call) and whether it matches the schema, then the outcome JSON and the webhook's result.
+- **Call files.** The files to download once the call ends: the transcript as text and as the full JSON log, and, for voice calls, the recording (WAV, customer on the left channel, bot on the right). They are also saved in `runs/exports/<call_id>/`.
+
+The webhook in this screenshot was a local test receiver.
 
 ### A text call
 
