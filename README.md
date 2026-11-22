@@ -127,6 +127,14 @@ The five outcome types:
 
 ## How to run
 
+### Windows one-click setup
+
+Two files in [`scripts/windows/`](scripts/windows/) set up and start the demo on Windows without typing commands. They need Git and Python 3.11–3.13 installed (Python with "Add python.exe to PATH" ticked).
+
+1. Download `setup_voice_agent.bat` and `start_demo.bat` into an empty folder.
+2. Double-click `setup_voice_agent.bat`. It clones the repo's `main` branch into a `voice-agent` folder next to it, creates a Python environment, installs the requirements, and opens `.env` in Notepad: fill in `SARVAM_API_KEY`, `NVIDIA_API_KEY` and, if you have one, `WEBHOOK_URL`, then save. Running it again updates the code and leaves `.env` alone.
+3. Double-click `start_demo.bat`. It starts the demo console and opens http://localhost:7860/demo in the browser. Keep its window open during the call; close it to stop the demo.
+
 ### Manual setup
 
 Python 3.11 or later.
@@ -197,7 +205,7 @@ python -m evals.run_evals --version v2.1 --set heldout --no-judge
 | `docs/` | The build plan and the scenario lists (`scenarios.csv`, `scenarios_heldout.csv`, with failure categories and brief or inferred tags) |
 | `docs/results/` | `final/` (v1 against v2, judged), `final-3way/` (all three versions, code checks), `test_results.csv`, `latency.md`. The older Stage 4 comparison (`comparison.md`, `v1_3runs.csv`, `v2_3runs.csv`) is kept for the record |
 | `samples/` | Five call transcripts (`.txt` and `.json`), what each shows and whether it works well or broke; see its README |
-| `scripts/` | Report generators, the voice test, the speech-to-text check, and the Stage 1 spike and latency check |
+| `scripts/` | Report generators, the voice test, the speech-to-text check, the Stage 1 spike and latency check, and the Windows setup (`scripts/windows/`) |
 | `runs/` | Transcripts, outcomes, recordings and results written at run time; git-ignored |
 
 Call recordings are not stored in the repo; they are shared separately with the submission.
