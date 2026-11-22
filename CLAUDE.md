@@ -27,6 +27,7 @@ The reviewers will read the code and ask us to walk through it. Prefer small, re
 - OTP is mocked. `ENFORCE_OTP=false` disables the code-level gate so the "balance without OTP" failure can be reproduced on demand.
 - The bot says it is an automated assistant calling from Mumbai Bank in its first line.
 - Figures (rate, fee, balance, minimum due) come from tools or config, never from the model's memory.
+- If the call ends (hang-up, silence, End call) with nothing agreed and no reason given by the customer, code records `CALLBACK_REQUEST` with reason `call_dropped` and `time: null`. A reason such as `busy` or `verification_failed` is only recorded when the transcript supports it.
 - Two failed OTP attempts end the call: no account details, outcome `CALLBACK_REQUEST` with reason `verification_failed`.
 - If someone other than the customer answers, the bot says nothing about the debt or dues and asks for a good time to call back: `CALLBACK_REQUEST` with reason `wrong_party`.
 - If the customer asks for a waiver and also promises to pay, the outcome is `PROMISE_TO_PAY` and the waiver goes in `follow_ups` as a `CALLBACK_REQUEST` with reason `waiver_request`.
